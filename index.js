@@ -19,25 +19,35 @@ app.post("/generate-workflow", async (req, res) => {
     if (!userRequest) {
       return res.status(400).json({
         status: "error",
-        message: "Поле prompt є обов’язковим",
+        message: "Поле prompt є обов'язковим"
       });
     }
 
-    const response = await client.responses.create({
-      model: "gpt-4.1-mini",
-      input: `Ти AI-агент, який допомагає створювати workflow для n8n.
-Користувач написав: "${userRequest}"
+    if (!process.env.OPENAI_API_KEY) {
+      return res.status(500).json({
+        status: "error",
+        message: "OPENAI_API_KEY не знайдено в Variables"
+      });
+    }
 
-Поверни коротку структуровану відповідь українською:
-1. Що потрібно зробити
-2. Які ноди n8n потрібні
-3. Яка логіка між нодами
-4. Який результат очікується`,
+    const response = await client.chat.completions.create({
+      model: "gpt-4.1-mini",
+      messages: [
+        {
+          role: "system",
+          content: "Ти AI-агент, який допомагає створювати workflow для n8n. Відповідай українською коротко і структуровано."
+        },
+        {
+          role: "user",
+          content: `Створи логіку workflow для задачі: ${userRequest}. Поверни: 1) що зробити, 2) які ноди потрібні, 3) логіку між нодами, 4) очікуваний результат.`
+        }
+      ],
+      temperature: 0.3
     });
 
     return res.json({
       status: "ok",
-      result: response.output_text,
+      result: response.choices[0].message.content
     });
   } catch (error) {
     console.error("OpenAI error:", error);
@@ -45,7 +55,7 @@ app.post("/generate-workflow", async (req, res) => {
     return res.status(500).json({
       status: "error",
       message: "Помилка при зверненні до OpenAI",
-      details: error.message,
+      details: error?.message || "Unknown error"
     });
   }
 });
