@@ -19,43 +19,56 @@ app.post("/generate-workflow", async (req, res) => {
     if (!userRequest) {
       return res.status(400).json({
         status: "error",
-        message: "Поле prompt є обов'язковим"
+        message: "Поле prompt є обов'язковим",
       });
     }
 
     if (!process.env.OPENAI_API_KEY) {
       return res.status(500).json({
         status: "error",
-        message: "OPENAI_API_KEY не знайдено в Variables"
+        message: "OPENAI_API_KEY не знайдено в Variables",
       });
     }
 
     const response = await client.chat.completions.create({
       model: "gpt-4.1-mini",
+      temperature: 0.2,
+      response_format: { type: "json_object" },
       messages: [
         {
           role: "system",
-          content: "Ти AI-агент, який допомагає створювати workflow для n8n. Відповідай українською коротко і структуровано."
+          content: `Ти AI-агент, який допомагає створювати workflow для n8n.
+Поверни тільки валідний JSON без пояснень і без markdown.
+
+Формат відповіді:
+{
+  "goal": "коротка ціль workflow",
+  "nodes": ["список потрібних нод n8n"],
+  "logic": ["крок 1", "крок 2", "крок 3"],
+  "result": "який результат отримає користувач"
+}`,
         },
         {
           role: "user",
-          content: `Створи логіку workflow для задачі: ${userRequest}. Поверни: 1) що зробити, 2) які ноди потрібні, 3) логіку між нодами, 4) очікуваний результат.`
-        }
+          content: `Створи workflow для задачі: ${userRequest}`,
+        },
       ],
-      temperature: 0.3
     });
+
+    const rawText = response.choices[0].message.content;
+    const parsed = JSON.parse(rawText);
 
     return res.json({
       status: "ok",
-      result: response.choices[0].message.content
+      data: parsed,
     });
   } catch (error) {
     console.error("OpenAI error:", error);
 
     return res.status(500).json({
       status: "error",
-      message: "Помилка при зверненні до OpenAI",
-      details: error?.message || "Unknown error"
+      message: "Помилка при зверненні до OpenAI або обробці JSON",
+      details: error?.message || "Unknown error",
     });
   }
 });
