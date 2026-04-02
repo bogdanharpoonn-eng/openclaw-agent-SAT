@@ -4,21 +4,23 @@ import fs from "fs/promises";
 import path from "path";
 
 const app = express();
-app.use(express.json({ limit: "1mb" }));
+// Збільшено ліміт для передачі великих JSON-схем
+app.use(express.json({ limit: "5mb" }));
 
 const client = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY,
 });
 
-// Схеми для різних типів задач
+/**
+ * СУВОРА СХЕМА: Обов'язково показуємо ШІ правильні дужки для n8n
+ */
 function getSchemaByTaskType(taskType) {
   if (taskType === "workflow_generation") {
-    // Структура, яку n8n розуміє при вставці (Ctrl+V)
     return {
       nodes: [
         {
           parameters: {},
-          id: "UUID",
+          id: "uuid-string",
           name: "Назва ноди",
           type: "n8n-nodes-base.назваНоди",
           typeVersion: 1,
@@ -40,31 +42,16 @@ function getSchemaByTaskType(taskType) {
       }
     };
   }
-  
-  // Стандартна схема для аналітики або ТЗ
   return {
-    analysis: "Текст аналізу",
-    recommendations: ["пункт 1", "пункт 2"],
-    status: "success"
+    status: "ok",
+    analysis: "Результат аналізу текстом"
   };
 }
 
-// Визначення типу задачі за текстом
 function detectTaskType(prompt) {
   const lowPrompt = prompt.toLowerCase();
-  if (lowPrompt.includes("флоу") || lowPrompt.includes("workflow") || lowPrompt.includes("створи ноди") || lowPrompt.includes("схему")) {
-    return "workflow_generation";
-  }
-  return "general_analysis";
-}
-
-// Формування фінального промпту користувача
-function buildUserPrompt(taskType, prompt, context) {
-  if (taskType === "workflow_generation") {
-    return `Згенеруй технічний JSON-код для n8n за цим запитом: "${prompt}". 
-    Використовуй тільки офіційні назви нод n8n. Контекст: ${JSON.stringify(context || {})}`;
-  }
-  return `Запит: ${prompt}. Контекст: ${JSON.stringify(context || {})}`;
+  const keywords = ["флоу", "workflow", "схему", "ноди", "автоматизацію", "json"];
+  return keywords.some(key => lowPrompt.includes(key)) ? "workflow_generation" : "general_analysis";
 }
 
 async function getPromptFile(fileName) {
@@ -73,7 +60,7 @@ async function getPromptFile(fileName) {
     return await fs.readFile(filePath, "utf-8");
   } catch (error) {
     console.error(`Помилка читання промпту ${fileName}:`, error);
-    return null;
+    return "";
   }
 }
 
@@ -83,17 +70,20 @@ async function buildSystemPrompt(taskType) {
 
   if (taskType === "workflow_generation") {
     const externalPrompt = await getPromptFile("n8n_builder.txt");
-    if (externalPrompt) {
-      specificInstructions = `\nТЕХНІЧНІ ВИМОГИ ДО N8N:\n${externalPrompt}`;
-    }
+    specificInstructions = `
+ТЕХНІЧНЕ ЗАВДАННЯ ДЛЯ N8N:
+1. Генеруй ПОВНИЙ масив "nodes" та об'єкт "connections".
+2. Кожна нода в масиві "nodes" — це окремий об'єкт {}.
+3. Координати "position" — це ЗАВЖДИ масив із двох чисел у квадратних дужках, наприклад [250, 300].
+4. Використовуй тільки офіційні назви (наприклад, n8n-nodes-base.telegramTrigger).
+5. ${externalPrompt}`;
   }
 
-  return `Ти експерт з автоматизації n8n.
-Відповідай ТІЛЬКИ чистим JSON без пояснень та markdown-розмітки.
-Мова відповідей: українська.
-Для workflow_generation генеруй ПОВНИЙ об'єкт з nodes та connections, готовий до імпорту.
+  return `Ти — Senior Automation Engineer n8n.
+Відповідай ТІЛЬКИ чистим JSON. Жодного тексту до або після JSON. Жодного markdown (\`\`\`json).
+Мова значень у JSON: українська.
 
-Очікувана структура JSON:
+Обов'язкова структура відповіді:
 ${schema}`;
 }
 
@@ -102,7 +92,7 @@ app.post("/agent", async (req, res) => {
     const { task_type, prompt, context } = req.body;
 
     if (!prompt) {
-      return res.status(400).json({ status: "error", message: "Поле prompt є обов'язковим" });
+      return res.status(400).json({ status: "error", message: "Prompt is required" });
     }
 
     const finalTaskType = task_type || detectTaskType(prompt);
@@ -110,25 +100,35 @@ app.post("/agent", async (req, res) => {
 
     const response = await client.chat.completions.create({
       model: "gpt-4o-mini",
-      temperature: 0.1,
+      temperature: 0, // Встановлено 0 для максимальної точності структури
       response_format: { type: "json_object" },
       messages: [
         { role: "system", content: systemContent },
-        { role: "user", content: buildUserPrompt(finalTaskType, prompt, context) },
+        { 
+          role: "user", 
+          content: `Запит користувача: "${prompt}". 
+          Контекст: ${JSON.stringify(context || {})}
+          Згенеруй технічно правильний JSON за вказаною схемою.` 
+        },
       ],
     });
 
-    // Повертаємо безпосередньо дані, щоб n8n міг їх відразу відобразити
+    const resultData = JSON.parse(response.choices[0].message.content);
+
     return res.json({
       status: "ok",
       task_type: finalTaskType,
-      data: JSON.parse(response.choices[0].message.content),
+      data: resultData,
     });
   } catch (error) {
     console.error("Agent error:", error);
-    return res.status(500).json({ status: "error", message: "Помилка обробки", details: error.message });
+    return res.status(500).json({ 
+      status: "error", 
+      message: "Internal error", 
+      details: error.message 
+    });
   }
 });
 
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log(`Server started on port ${PORT}`));
+app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
