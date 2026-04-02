@@ -14,4 +14,9 @@
     "prompt_file": "chat_assistant.txt",
     "use_schema": false
   }
+  "web_researcher": {
+  "keywords": ["знайди", "новини", "час", "нагадай", "pdf", "пдф"],
+  "prompt_file": "web_researcher.txt",
+  "use_schema": true
+}
 }
