@@ -9,14 +9,14 @@
     "prompt_file": "logistics_analyst.txt",
     "use_schema": true
   },
+  "web_researcher": {
+    "keywords": ["знайди", "новини", "час", "нагадай", "pdf", "пдф", "пошук"],
+    "prompt_file": "web_researcher.txt",
+    "use_schema": true
+  },
   "casual_chat": {
-    "keywords": ["привіт", "як справи", "хто ти", "дякую"],
+    "keywords": ["привіт", "як справи", "хто ти", "дякую", "допоможи"],
     "prompt_file": "chat_assistant.txt",
     "use_schema": false
   }
-  "web_researcher": {
-  "keywords": ["знайди", "новини", "час", "нагадай", "pdf", "пдф"],
-  "prompt_file": "web_researcher.txt",
-  "use_schema": true
-}
 }
