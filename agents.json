@@ -14,8 +14,8 @@
     "prompt_file": "web_researcher.txt",
     "use_schema": true
   },
-  "casual_chat": {
-    "keywords": ["привіт", "як справи", "хто ти", "дякую", "допоможи"],
+  "general_assistant": {
+    "keywords": ["привіт", "як справи", "хто ти", "дякую", "допоможи", "що ти вмієш"],
     "prompt_file": "chat_assistant.txt",
     "use_schema": false
   }

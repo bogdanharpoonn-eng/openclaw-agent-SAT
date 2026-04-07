@@ -15,21 +15,55 @@ async function getAgentsConfig() {
 }
 
 // Пошук потрібного субагента за ключовими словами
-function identifyAgent(prompt, config) {
+function identifyAgentByKeywords(prompt, config) {
   const lowPrompt = prompt.toLowerCase();
   for (const [agentId, settings] of Object.entries(config)) {
     if (settings.keywords.some(key => lowPrompt.includes(key))) {
       return agentId;
     }
   }
-  return "casual_chat"; // Дефолтний агент
+  return null;
+}
+
+// Якщо ключові слова не спрацювали, архітектор обирає профільного субагента через LLM
+async function identifyAgentByArchitect(prompt, config) {
+  const availableAgents = Object.keys(config);
+  const agentsHints = Object.entries(config)
+    .map(([agentId, settings]) => `${agentId}: ${settings.keywords.join(", ")}`)
+    .join("\n");
+
+  const classifier = await client.chat.completions.create({
+    model: "gpt-4o-mini",
+    temperature: 0,
+    response_format: { type: "json_object" },
+    messages: [
+      {
+        role: "system",
+        content: `Ти агент-архітектор. Ти не відповідаєш користувачу по суті, лише обираєш sub-agent.
+Поверни ТІЛЬКИ JSON формату {"agent":"<id>"}.
+Доступні sub-agent:
+${agentsHints}
+Якщо запит загальний або неочевидний, обирай "general_assistant".`,
+      },
+      { role: "user", content: prompt }
+    ],
+  });
+
+  const raw = classifier.choices?.[0]?.message?.content || "{}";
+  const parsed = JSON.parse(raw);
+  const candidate = parsed?.agent;
+  return availableAgents.includes(candidate) ? candidate : "general_assistant";
 }
 
 app.post("/agent", async (req, res) => {
   try {
-    const { prompt } = req.body;
+    const prompt = req.body?.message ?? req.body?.prompt;
+    if (typeof prompt !== "string" || !prompt.trim()) {
+      return res.status(400).type("text/plain").send("Field 'message' or 'prompt' is required.");
+    }
+
     const config = await getAgentsConfig();
-    const agentId = identifyAgent(prompt, config);
+    const agentId = identifyAgentByKeywords(prompt, config) ?? await identifyAgentByArchitect(prompt, config);
     const agentSettings = config[agentId];
 
     // Читаємо інструкцію субагента з .txt файлу
@@ -41,21 +75,17 @@ app.post("/agent", async (req, res) => {
     const response = await client.chat.completions.create({
       model: "gpt-4o-mini",
       temperature: 0,
-      response_format: { type: "json_object" },
       messages: [
-        { role: "system", content: `${systemInstruction}\nВідповідай ТІЛЬКИ JSON українською мовою.` },
+        { role: "system", content: systemInstruction },
         { role: "user", content: prompt }
       ],
     });
 
-    return res.json({
-      status: "ok",
-      agent: agentId,
-      data: JSON.parse(response.choices[0].message.content)
-    });
+    const outputText = response.choices?.[0]?.message?.content?.trim() || "";
+    return res.type("text/plain").send(outputText);
   } catch (error) {
     console.error(error);
-    return res.status(500).json({ status: "error", message: error.message });
+    return res.status(500).type("text/plain").send(error.message || "Internal server error");
   }
 });
 
