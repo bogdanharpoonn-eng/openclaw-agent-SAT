@@ -192,10 +192,10 @@ app.post("/agent", async (req, res) => {
       ? `${systemInstruction}\n\nАктуальні профільні помічники (з конфігу):\n${buildCapabilitiesText(config)}`
       : systemInstruction;
 
-    const useWeb = Boolean(req.body?.use_web);
     const requestUrls = Array.isArray(req.body?.urls) ? req.body.urls.filter(u => typeof u === "string" && u.trim()) : [];
     const extractedUrls = requestUrls.length === 0 ? extractUrlsFromText(prompt) : [];
     const urls = requestUrls.length > 0 ? requestUrls : extractedUrls;
+    const useWeb = Boolean(req.body?.use_web) || urls.length > 0;
 
     let webContext = "";
     if (useWeb && urls.length > 0) {
