@@ -1,4 +1,24 @@
 {
+  "builder_designer_airtable": {
+    "display_name": "Builder, Design & Airtable Agent",
+    "description": "Генерує n8n-флоу, проєктує дизайн сайтів та допомагає з Airtable-структурами й автоматизаціями.",
+    "keywords": [
+      "флоу",
+      "workflow",
+      "n8n",
+      "автоматизац",
+      "дизайн",
+      "ui",
+      "ux",
+      "сайт",
+      "лендінг",
+      "airtable",
+      "база",
+      "таблиця"
+    ],
+    "prompt_file": "builder_designer_airtable.txt",
+    "use_schema": false
+  },
   "general_assistant": {
     "display_name": "General Assistant",
     "description": "Базовий агент-архітектор. Тимчасово єдиний активний агент, доки додаємо нових по одному.",
