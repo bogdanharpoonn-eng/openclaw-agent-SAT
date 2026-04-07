@@ -14,6 +14,16 @@ async function getAgentsConfig() {
   return JSON.parse(data);
 }
 
+function buildCapabilitiesText(config) {
+  return Object.entries(config)
+    .map(([agentId, settings]) => {
+      const name = settings.display_name || agentId;
+      const description = settings.description || "Профільний субагент.";
+      return `- ${name} (${agentId}): ${description}`;
+    })
+    .join("\n");
+}
+
 // Пошук потрібного субагента за ключовими словами
 function identifyAgentByKeywords(prompt, config) {
   const lowPrompt = prompt.toLowerCase();
@@ -72,17 +82,36 @@ app.post("/agent", async (req, res) => {
       "utf-8"
     );
 
+    const dynamicSystemInstruction = agentId === "general_assistant"
+      ? `${systemInstruction}\n\nАктуальні профільні помічники (з конфігу):\n${buildCapabilitiesText(config)}`
+      : systemInstruction;
+
     const response = await client.chat.completions.create({
       model: "gpt-4o-mini",
       temperature: 0,
       messages: [
-        { role: "system", content: systemInstruction },
+        { role: "system", content: dynamicSystemInstruction },
         { role: "user", content: prompt }
       ],
     });
 
     const outputText = response.choices?.[0]?.message?.content?.trim() || "";
     return res.type("text/plain").send(outputText);
+  } catch (error) {
+    console.error(error);
+    return res.status(500).type("text/plain").send(error.message || "Internal server error");
+  }
+});
+
+app.get("/capabilities", async (_req, res) => {
+  try {
+    const config = await getAgentsConfig();
+    const lines = Object.entries(config).map(([agentId, settings]) => {
+      const name = settings.display_name || agentId;
+      const description = settings.description || "Профільний субагент.";
+      return `${name} (${agentId}): ${description}`;
+    });
+    return res.type("text/plain").send(lines.join("\n"));
   } catch (error) {
     console.error(error);
     return res.status(500).type("text/plain").send(error.message || "Internal server error");
