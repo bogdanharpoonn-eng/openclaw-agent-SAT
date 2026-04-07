@@ -70,6 +70,14 @@ function htmlToText(html) {
     .trim();
 }
 
+function extractUrlsFromText(text) {
+  const matches = text.match(/https?:\/\/[^\s)]+/gi) || [];
+  const normalized = matches
+    .map(u => u.trim().replace(/[.,!?;:]+$/, ""))
+    .filter(Boolean);
+  return [...new Set(normalized)];
+}
+
 async function fetchUrlText(rawUrl) {
   const check = isAllowedUrl(rawUrl);
   if (!check.ok) {
@@ -185,7 +193,9 @@ app.post("/agent", async (req, res) => {
       : systemInstruction;
 
     const useWeb = Boolean(req.body?.use_web);
-    const urls = Array.isArray(req.body?.urls) ? req.body.urls.filter(u => typeof u === "string" && u.trim()) : [];
+    const requestUrls = Array.isArray(req.body?.urls) ? req.body.urls.filter(u => typeof u === "string" && u.trim()) : [];
+    const extractedUrls = requestUrls.length === 0 ? extractUrlsFromText(prompt) : [];
+    const urls = requestUrls.length > 0 ? requestUrls : extractedUrls;
 
     let webContext = "";
     if (useWeb && urls.length > 0) {
