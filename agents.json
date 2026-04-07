@@ -1,29 +1,8 @@
 {
-  "workflow_generation": {
-    "display_name": "n8n Workflow Builder",
-    "description": "Створює та структурує n8n workflow під бізнес-задачі.",
-    "keywords": ["флоу", "workflow", "ноди", "автоматизацію", "створи"],
-    "prompt_file": "n8n_builder.txt",
-    "use_schema": true
-  },
-  "logistics_analysis": {
-    "display_name": "Logistics Analyst",
-    "description": "Робить логістичний аналіз: метрики, економіка, ризики, висновки.",
-    "keywords": ["аналіз", "звіт", "метрики", "затримки", "економіка"],
-    "prompt_file": "logistics_analyst.txt",
-    "use_schema": true
-  },
-  "web_researcher": {
-    "display_name": "Web Researcher",
-    "description": "Пошук інформації, новин і планування задач/нагадувань.",
-    "keywords": ["знайди", "новини", "час", "нагадай", "pdf", "пдф", "пошук"],
-    "prompt_file": "web_researcher.txt",
-    "use_schema": true
-  },
   "general_assistant": {
     "display_name": "General Assistant",
-    "description": "Загальні запити, пояснення, тексти та первинна навігація по можливостях.",
-    "keywords": ["привіт", "як справи", "хто ти", "дякую", "допоможи", "що ти вмієш"],
+    "description": "Базовий агент-архітектор. Тимчасово єдиний активний агент, доки додаємо нових по одному.",
+    "keywords": [],
     "prompt_file": "chat_assistant.txt",
     "use_schema": false
   }

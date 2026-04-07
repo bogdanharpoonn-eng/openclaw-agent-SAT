@@ -73,7 +73,10 @@ app.post("/agent", async (req, res) => {
     }
 
     const config = await getAgentsConfig();
-    const agentId = identifyAgentByKeywords(prompt, config) ?? await identifyAgentByArchitect(prompt, config);
+    const configuredAgents = Object.keys(config);
+    const agentId = configuredAgents.length === 1
+      ? configuredAgents[0]
+      : (identifyAgentByKeywords(prompt, config) ?? await identifyAgentByArchitect(prompt, config));
     const agentSettings = config[agentId];
 
     // Читаємо інструкцію субагента з .txt файлу
