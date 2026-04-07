@@ -7,6 +7,12 @@ const app = express();
 app.use(express.json({ limit: "5mb" }));
 
 const client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+const WEB_FETCH_TIMEOUT_MS = Number(process.env.WEB_FETCH_TIMEOUT_MS || 8000);
+const WEB_FETCH_MAX_CHARS = Number(process.env.WEB_FETCH_MAX_CHARS || 12000);
+const WEB_FETCH_ALLOWLIST = (process.env.WEB_FETCH_ALLOWLIST || "")
+  .split(",")
+  .map(s => s.trim().toLowerCase())
+  .filter(Boolean);
 
 // Завантаження конфігурації агентів
 async function getAgentsConfig() {
@@ -22,6 +28,80 @@ function buildCapabilitiesText(config) {
       return `- ${name} (${agentId}): ${description}`;
     })
     .join("\n");
+}
+
+function isAllowedUrl(rawUrl) {
+  let parsed;
+  try {
+    parsed = new URL(rawUrl);
+  } catch {
+    return { ok: false, reason: "Invalid URL format" };
+  }
+
+  if (!["http:", "https:"].includes(parsed.protocol)) {
+    return { ok: false, reason: "Only http/https URLs are allowed" };
+  }
+
+  if (WEB_FETCH_ALLOWLIST.length === 0) {
+    return { ok: true, url: parsed.toString() };
+  }
+
+  const hostname = parsed.hostname.toLowerCase();
+  const allowed = WEB_FETCH_ALLOWLIST.some(domain => hostname === domain || hostname.endsWith(`.${domain}`));
+  if (!allowed) {
+    return { ok: false, reason: `Domain is not in allowlist: ${hostname}` };
+  }
+
+  return { ok: true, url: parsed.toString() };
+}
+
+function htmlToText(html) {
+  return html
+    .replace(/<script[\s\S]*?<\/script>/gi, " ")
+    .replace(/<style[\s\S]*?<\/style>/gi, " ")
+    .replace(/<\/(p|div|h1|h2|h3|h4|h5|h6|li|tr|section|article)>/gi, "\n")
+    .replace(/<[^>]+>/g, " ")
+    .replace(/&nbsp;/g, " ")
+    .replace(/&amp;/g, "&")
+    .replace(/&quot;/g, "\"")
+    .replace(/\s+\n/g, "\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .replace(/[ \t]{2,}/g, " ")
+    .trim();
+}
+
+async function fetchUrlText(rawUrl) {
+  const check = isAllowedUrl(rawUrl);
+  if (!check.ok) {
+    throw new Error(check.reason);
+  }
+
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), WEB_FETCH_TIMEOUT_MS);
+  try {
+    const response = await fetch(check.url, {
+      signal: controller.signal,
+      headers: {
+        "User-Agent": "OpenClaw-Agent/1.0 (+web-fetch)",
+        "Accept": "text/html,application/xhtml+xml,text/plain;q=0.9,*/*;q=0.8",
+      },
+    });
+
+    if (!response.ok) {
+      throw new Error(`Fetch failed with status ${response.status}`);
+    }
+
+    const contentType = response.headers.get("content-type") || "";
+    if (!contentType.includes("text") && !contentType.includes("html") && !contentType.includes("json")) {
+      throw new Error(`Unsupported content-type: ${contentType}`);
+    }
+
+    const raw = await response.text();
+    const text = contentType.includes("html") ? htmlToText(raw) : raw.trim();
+    return text.slice(0, WEB_FETCH_MAX_CHARS);
+  } finally {
+    clearTimeout(timeoutId);
+  }
 }
 
 // Пошук потрібного субагента за ключовими словами
@@ -65,6 +145,21 @@ ${agentsHints}
   return availableAgents.includes(candidate) ? candidate : "general_assistant";
 }
 
+app.post("/fetch", async (req, res) => {
+  try {
+    const url = req.body?.url;
+    if (typeof url !== "string" || !url.trim()) {
+      return res.status(400).json({ status: "error", message: "Field 'url' is required." });
+    }
+
+    const content = await fetchUrlText(url.trim());
+    return res.json({ status: "ok", url: url.trim(), content });
+  } catch (error) {
+    console.error(error);
+    return res.status(500).json({ status: "error", message: error.message || "Fetch failed" });
+  }
+});
+
 app.post("/agent", async (req, res) => {
   try {
     const prompt = req.body?.message ?? req.body?.prompt;
@@ -89,12 +184,33 @@ app.post("/agent", async (req, res) => {
       ? `${systemInstruction}\n\nАктуальні профільні помічники (з конфігу):\n${buildCapabilitiesText(config)}`
       : systemInstruction;
 
+    const useWeb = Boolean(req.body?.use_web);
+    const urls = Array.isArray(req.body?.urls) ? req.body.urls.filter(u => typeof u === "string" && u.trim()) : [];
+
+    let webContext = "";
+    if (useWeb && urls.length > 0) {
+      const chunks = [];
+      for (const rawUrl of urls.slice(0, 3)) {
+        try {
+          const text = await fetchUrlText(rawUrl);
+          chunks.push(`URL: ${rawUrl}\n${text}`);
+        } catch (err) {
+          chunks.push(`URL: ${rawUrl}\n[Fetch error: ${err.message}]`);
+        }
+      }
+      webContext = chunks.join("\n\n---\n\n");
+    }
+
+    const finalUserMessage = webContext
+      ? `${prompt}\n\nВеб-контекст (використай лише якщо релевантно):\n${webContext}`
+      : prompt;
+
     const response = await client.chat.completions.create({
       model: "gpt-4o-mini",
       temperature: 0,
       messages: [
         { role: "system", content: dynamicSystemInstruction },
-        { role: "user", content: prompt }
+        { role: "user", content: finalUserMessage }
       ],
     });
 
