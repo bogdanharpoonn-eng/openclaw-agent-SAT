@@ -198,17 +198,27 @@ app.post("/agent", async (req, res) => {
     const useWeb = Boolean(req.body?.use_web) || urls.length > 0;
 
     let webContext = "";
+    let webSuccessCount = 0;
+    const webErrors = [];
     if (useWeb && urls.length > 0) {
       const chunks = [];
       for (const rawUrl of urls.slice(0, 3)) {
         try {
           const text = await fetchUrlText(rawUrl);
           chunks.push(`URL: ${rawUrl}\n${text}`);
+          webSuccessCount += 1;
         } catch (err) {
-          chunks.push(`URL: ${rawUrl}\n[Fetch error: ${err.message}]`);
+          const msg = err?.message || "Unknown fetch error";
+          chunks.push(`URL: ${rawUrl}\n[Fetch error: ${msg}]`);
+          webErrors.push(`${rawUrl} -> ${msg}`);
         }
       }
       webContext = chunks.join("\n\n---\n\n");
+    }
+
+    if (useWeb && urls.length > 0 && webSuccessCount === 0) {
+      const details = webErrors.length > 0 ? webErrors.join("; ") : "No content fetched";
+      return res.status(502).type("text/plain").send(`Web fetch failed: ${details}`);
     }
 
     const finalUserMessage = webContext
