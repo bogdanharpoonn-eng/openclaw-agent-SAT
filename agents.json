@@ -1,29 +1,27 @@
 {
-  "builder_designer_airtable": {
-    "display_name": "Builder, Design & Airtable Agent",
-    "description": "Генерує n8n-флоу, проєктує дизайн сайтів та допомагає з Airtable-структурами й автоматизаціями.",
-    "keywords": [
-      "флоу",
-      "workflow",
-      "n8n",
-      "автоматизац",
-      "дизайн",
-      "ui",
-      "ux",
-      "сайт",
-      "лендінг",
-      "airtable",
-      "база",
-      "таблиця"
-    ],
-    "prompt_file": "builder_designer_airtable.txt",
-    "use_schema": false
-  },
   "general_assistant": {
     "display_name": "General Assistant",
-    "description": "Базовий агент-архітектор. Тимчасово єдиний активний агент, доки додаємо нових по одному.",
+    "description": "Єдиний активний агент-архітектор для всіх запитів.",
     "keywords": [],
     "prompt_file": "chat_assistant.txt",
+    "use_schema": false
+  },
+  "web_scraping_agent": {
+    "display_name": "Web Scraping Agent",
+    "description": "Профільний субагент для задач зі скрейпінгу сайтів, витягання структурованих даних і перевірки веб-джерел.",
+    "keywords": [
+      "скрейп",
+      "scraping",
+      "crawl",
+      "crawler",
+      "парсинг",
+      "веб-дані",
+      "витягни з сайту",
+      "xpath",
+      "css selector",
+      "playwright"
+    ],
+    "prompt_file": "web_scraping_agent.txt",
     "use_schema": false
   }
 }
