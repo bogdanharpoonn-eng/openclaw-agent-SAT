@@ -5,6 +5,7 @@ import path from "path";
 import os from "os";
 import { execFile } from "child_process";
 import { promisify } from "util";
+import iconv from "iconv-lite";
 
 const app = express();
 app.use(express.json({ limit: "5mb" }));
@@ -85,6 +86,33 @@ function extractUrlsFromText(text) {
   return [...new Set(normalized)];
 }
 
+function fixMojibake(text) {
+  if (typeof text !== "string" || text.length === 0) return text;
+  // Heuristic: recover UTF-8 text that was misread as Latin-1/Windows-1252.
+  const recoded = Buffer.from(text, "latin1").toString("utf8");
+  const hasCyrOriginal = /[А-Яа-яІіЇїЄєҐґ]/.test(text);
+  const hasCyrRecoded = /[А-Яа-яІіЇїЄєҐґ]/.test(recoded);
+  if (!hasCyrOriginal && hasCyrRecoded) {
+    return recoded;
+  }
+  return text;
+}
+
+function cyrillicScore(text) {
+  const m = text.match(/[А-Яа-яІіЇїЄєҐґ]/g);
+  return m ? m.length : 0;
+}
+
+function decodeBestText(buffer) {
+  const utf8 = buffer.toString("utf8");
+  const cp1251 = iconv.decode(buffer, "win1251");
+  const latin1Utf8 = Buffer.from(utf8, "latin1").toString("utf8");
+
+  const candidates = [utf8, cp1251, latin1Utf8].map(t => fixMojibake(t));
+  const best = candidates.sort((a, b) => cyrillicScore(b) - cyrillicScore(a))[0];
+  return best || utf8;
+}
+
 async function runScraplingExtract({
   rawUrl,
   mode = "get",
@@ -106,7 +134,7 @@ async function runScraplingExtract({
   const outFile = path.join(tmpDir, "content.txt");
 
   const args = ["extract", mode, check.url, outFile, "--ai-targeted"];
-  if (SCRAPLING_NO_VERIFY) {
+  if (SCRAPLING_NO_VERIFY && mode === "get") {
     args.push("--no-verify");
   }
   if (cssSelector && typeof cssSelector === "string") {
@@ -122,8 +150,8 @@ async function runScraplingExtract({
       windowsHide: true,
       maxBuffer: 2 * 1024 * 1024,
     });
-    const content = await fs.readFile(outFile, "utf-8");
-    return { url: check.url, mode, content: content.trim() };
+    const contentBuffer = await fs.readFile(outFile);
+    return { url: check.url, mode, content: decodeBestText(contentBuffer).trim() };
   } catch (error) {
     const stderr = error?.stderr?.toString?.() || "";
     const stdout = error?.stdout?.toString?.() || "";
@@ -345,8 +373,8 @@ app.post("/agent", async (req, res) => {
       ],
     });
 
-    const outputText = response.choices?.[0]?.message?.content?.trim() || "";
-    return res.type("text/plain").send(outputText);
+    const outputText = fixMojibake(response.choices?.[0]?.message?.content?.trim() || "");
+    return res.type("text/plain; charset=utf-8").send(outputText);
   } catch (error) {
     console.error(error);
     return res.status(500).type("text/plain").send(error.message || "Internal server error");
@@ -361,7 +389,7 @@ app.get("/capabilities", async (_req, res) => {
       const description = settings.description || "Профільний субагент.";
       return `${name} (${agentId}): ${description}`;
     });
-    return res.type("text/plain").send(lines.join("\n"));
+    return res.type("text/plain; charset=utf-8").send(lines.join("\n"));
   } catch (error) {
     console.error(error);
     return res.status(500).type("text/plain").send(error.message || "Internal server error");
