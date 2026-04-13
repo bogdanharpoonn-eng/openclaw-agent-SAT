@@ -29,6 +29,7 @@ npm start
 | `WEB_FETCH_ALLOWLIST` | Через кому: дозволені **домени** для `fetch` (наприклад `example.com,docs.example.com`). Якщо порожньо — дозволені всі `http`/`https` (обережно в проді). |
 | `SCRAPLING_BIN` | Шлях до бінарника Scrapling (за замовчуванням `scrapling`). |
 | `SCRAPE_TIMEOUT_MS` | Таймаут запуску Scrapling у мс (за замовчуванням `45000`). |
+| `SCRAPLING_NO_VERIFY` | Якщо `true`, Scrapling запускається з `--no-verify` (корисно при локальній SSL-проблемі сертифікатів). |
 
 ## API
 

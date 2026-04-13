@@ -14,6 +14,7 @@ const WEB_FETCH_TIMEOUT_MS = Number(process.env.WEB_FETCH_TIMEOUT_MS || 8000);
 const WEB_FETCH_MAX_CHARS = Number(process.env.WEB_FETCH_MAX_CHARS || 12000);
 const SCRAPLING_BIN = process.env.SCRAPLING_BIN || "scrapling";
 const SCRAPE_TIMEOUT_MS = Number(process.env.SCRAPE_TIMEOUT_MS || 45000);
+const SCRAPLING_NO_VERIFY = String(process.env.SCRAPLING_NO_VERIFY || "").toLowerCase() === "true";
 const execFileAsync = promisify(execFile);
 const WEB_FETCH_ALLOWLIST = (process.env.WEB_FETCH_ALLOWLIST || "")
   .split(",")
@@ -105,6 +106,9 @@ async function runScraplingExtract({
   const outFile = path.join(tmpDir, "content.txt");
 
   const args = ["extract", mode, check.url, outFile, "--ai-targeted"];
+  if (SCRAPLING_NO_VERIFY) {
+    args.push("--no-verify");
+  }
   if (cssSelector && typeof cssSelector === "string") {
     args.push("--css-selector", cssSelector.trim());
   }
