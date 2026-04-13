@@ -27,6 +27,8 @@ npm start
 | `WEB_FETCH_TIMEOUT_MS` | Таймаут завантаження URL (за замовчуванням `8000`). |
 | `WEB_FETCH_MAX_CHARS` | Максимум символів з однієї сторінки (за замовчуванням `12000`). |
 | `WEB_FETCH_ALLOWLIST` | Через кому: дозволені **домени** для `fetch` (наприклад `example.com,docs.example.com`). Якщо порожньо — дозволені всі `http`/`https` (обережно в проді). |
+| `SCRAPLING_BIN` | Шлях до бінарника Scrapling (за замовчуванням `scrapling`). |
+| `SCRAPE_TIMEOUT_MS` | Таймаут запуску Scrapling у мс (за замовчуванням `45000`). |
 
 ## API
 
@@ -39,6 +41,9 @@ npm start
 - `message` або `prompt` (рядок) — запит користувача; **обов’язково одне з них**.
 - `use_web` (boolean, опційно) — намагатися підтягнути веб-контекст.
 - `urls` (масив рядків, опційно) — явний список URL. Якщо не передано, URL можуть бути витягнуті з тексту `prompt` (до 3 штук).
+- `use_scrape` (boolean, опційно) — для `web_scraping_agent` вмикає Scrapling-контекст (за замовчуванням увімкнено).
+- `scrape_mode` (опційно): `get` | `fetch` | `stealthy-fetch`.
+- `css_selector`, `wait_selector`, `scrape_timeout_ms` (опційно) — параметри для Scrapling.
 
 **Відповідь:** `text/plain` — текст відповіді моделі.
 
@@ -51,6 +56,20 @@ npm start
 **Тіло:** `{ "url": "https://..." }`
 
 **Відповідь (JSON):** `{ "status": "ok", "url", "content" }` або `{ "status": "error", "message" }`.
+
+### `POST /scrape`
+
+Реальний запуск Scrapling CLI для збору контенту сторінки.
+
+**Тіло (JSON):**
+
+- `url` (рядок, обов’язково)
+- `mode` (опційно): `get` | `fetch` | `stealthy-fetch` (за замовчуванням `get`)
+- `css_selector` (опційно)
+- `wait_selector` (опційно, для `fetch` / `stealthy-fetch`)
+- `timeout_ms` (опційно)
+
+**Відповідь (JSON):** `{ "status": "ok", "url", "mode", "content" }` або `{ "status": "error", "message" }`.
 
 ### `GET /capabilities`
 

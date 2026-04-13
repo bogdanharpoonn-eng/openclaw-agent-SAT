@@ -2,6 +2,9 @@ import express from "express";
 import OpenAI from "openai";
 import fs from "fs/promises";
 import path from "path";
+import os from "os";
+import { execFile } from "child_process";
+import { promisify } from "util";
 
 const app = express();
 app.use(express.json({ limit: "5mb" }));
@@ -9,6 +12,9 @@ app.use(express.json({ limit: "5mb" }));
 const client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 const WEB_FETCH_TIMEOUT_MS = Number(process.env.WEB_FETCH_TIMEOUT_MS || 8000);
 const WEB_FETCH_MAX_CHARS = Number(process.env.WEB_FETCH_MAX_CHARS || 12000);
+const SCRAPLING_BIN = process.env.SCRAPLING_BIN || "scrapling";
+const SCRAPE_TIMEOUT_MS = Number(process.env.SCRAPE_TIMEOUT_MS || 45000);
+const execFileAsync = promisify(execFile);
 const WEB_FETCH_ALLOWLIST = (process.env.WEB_FETCH_ALLOWLIST || "")
   .split(",")
   .map(s => s.trim().toLowerCase())
@@ -76,6 +82,55 @@ function extractUrlsFromText(text) {
     .map(u => u.trim().replace(/[.,!?;:]+$/, ""))
     .filter(Boolean);
   return [...new Set(normalized)];
+}
+
+async function runScraplingExtract({
+  rawUrl,
+  mode = "get",
+  cssSelector,
+  timeoutMs = SCRAPE_TIMEOUT_MS,
+  waitSelector,
+}) {
+  const check = isAllowedUrl(rawUrl);
+  if (!check.ok) {
+    throw new Error(check.reason);
+  }
+
+  const allowedModes = new Set(["get", "fetch", "stealthy-fetch"]);
+  if (!allowedModes.has(mode)) {
+    throw new Error(`Unsupported scrape mode: ${mode}`);
+  }
+
+  const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "scrapling-"));
+  const outFile = path.join(tmpDir, "content.txt");
+
+  const args = ["extract", mode, check.url, outFile, "--ai-targeted"];
+  if (cssSelector && typeof cssSelector === "string") {
+    args.push("--css-selector", cssSelector.trim());
+  }
+  if (waitSelector && typeof waitSelector === "string" && (mode === "fetch" || mode === "stealthy-fetch")) {
+    args.push("--wait-selector", waitSelector.trim());
+  }
+
+  try {
+    await execFileAsync(SCRAPLING_BIN, args, {
+      timeout: timeoutMs,
+      windowsHide: true,
+      maxBuffer: 2 * 1024 * 1024,
+    });
+    const content = await fs.readFile(outFile, "utf-8");
+    return { url: check.url, mode, content: content.trim() };
+  } catch (error) {
+    const stderr = error?.stderr?.toString?.() || "";
+    const stdout = error?.stdout?.toString?.() || "";
+    const details = [stderr, stdout].filter(Boolean).join(" ").trim();
+    if (details.includes("not recognized") || details.includes("ENOENT")) {
+      throw new Error("Scrapling binary is not available. Install Scrapling and set SCRAPLING_BIN if needed.");
+    }
+    throw new Error(details || error.message || "Scrapling execution failed");
+  } finally {
+    await fs.rm(tmpDir, { recursive: true, force: true });
+  }
 }
 
 async function fetchUrlText(rawUrl) {
@@ -168,6 +223,33 @@ app.post("/fetch", async (req, res) => {
   }
 });
 
+app.post("/scrape", async (req, res) => {
+  try {
+    const url = req.body?.url;
+    if (typeof url !== "string" || !url.trim()) {
+      return res.status(400).json({ status: "error", message: "Field 'url' is required." });
+    }
+
+    const mode = typeof req.body?.mode === "string" ? req.body.mode.trim() : "get";
+    const cssSelector = typeof req.body?.css_selector === "string" ? req.body.css_selector : undefined;
+    const waitSelector = typeof req.body?.wait_selector === "string" ? req.body.wait_selector : undefined;
+    const timeoutMs = Number(req.body?.timeout_ms || SCRAPE_TIMEOUT_MS);
+
+    const result = await runScraplingExtract({
+      rawUrl: url.trim(),
+      mode,
+      cssSelector,
+      waitSelector,
+      timeoutMs,
+    });
+
+    return res.json({ status: "ok", ...result });
+  } catch (error) {
+    console.error(error);
+    return res.status(500).json({ status: "error", message: error.message || "Scrape failed" });
+  }
+});
+
 app.post("/agent", async (req, res) => {
   try {
     const prompt = req.body?.message ?? req.body?.prompt;
@@ -196,6 +278,7 @@ app.post("/agent", async (req, res) => {
     const extractedUrls = requestUrls.length === 0 ? extractUrlsFromText(prompt) : [];
     const urls = requestUrls.length > 0 ? requestUrls : extractedUrls;
     const useWeb = Boolean(req.body?.use_web) || urls.length > 0;
+    const useScrape = agentId === "web_scraping_agent" && req.body?.use_scrape !== false;
 
     let webContext = "";
     let webSuccessCount = 0;
@@ -221,9 +304,33 @@ app.post("/agent", async (req, res) => {
       return res.status(502).type("text/plain").send(`Web fetch failed: ${details}`);
     }
 
-    const finalUserMessage = webContext
-      ? `${prompt}\n\nВеб-контекст (використай лише якщо релевантно):\n${webContext}`
-      : prompt;
+    let scrapeContext = "";
+    if (useScrape && urls.length > 0) {
+      const chunks = [];
+      const scrapeMode = typeof req.body?.scrape_mode === "string" ? req.body.scrape_mode.trim() : "get";
+      for (const rawUrl of urls.slice(0, 2)) {
+        try {
+          const result = await runScraplingExtract({
+            rawUrl,
+            mode: scrapeMode,
+            cssSelector: typeof req.body?.css_selector === "string" ? req.body.css_selector : undefined,
+            waitSelector: typeof req.body?.wait_selector === "string" ? req.body.wait_selector : undefined,
+            timeoutMs: Number(req.body?.scrape_timeout_ms || SCRAPE_TIMEOUT_MS),
+          });
+          chunks.push(`URL: ${result.url}\n${result.content.slice(0, WEB_FETCH_MAX_CHARS)}`);
+        } catch (err) {
+          const msg = err?.message || "Scrape failed";
+          chunks.push(`URL: ${rawUrl}\n[Scrape error: ${msg}]`);
+        }
+      }
+      scrapeContext = chunks.join("\n\n---\n\n");
+    }
+
+    const finalUserMessage = [
+      prompt,
+      webContext ? `Веб-контекст (використай лише якщо релевантно):\n${webContext}` : "",
+      scrapeContext ? `Результат Scrapling:\n${scrapeContext}` : "",
+    ].filter(Boolean).join("\n\n");
 
     const response = await client.chat.completions.create({
       model: "gpt-4o-mini",
