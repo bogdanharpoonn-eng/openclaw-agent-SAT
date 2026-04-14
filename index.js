@@ -16,6 +16,9 @@ const WEB_FETCH_MAX_CHARS = Number(process.env.WEB_FETCH_MAX_CHARS || 12000);
 const SCRAPLING_BIN = process.env.SCRAPLING_BIN || "scrapling";
 const SCRAPE_TIMEOUT_MS = Number(process.env.SCRAPE_TIMEOUT_MS || 45000);
 const SCRAPLING_NO_VERIFY = String(process.env.SCRAPLING_NO_VERIFY || "").toLowerCase() === "true";
+const TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || "";
+const BASE_URL = process.env.BASE_URL || "";
+const PORT = process.env.PORT || 3000;
 const execFileAsync = promisify(execFile);
 const WEB_FETCH_ALLOWLIST = (process.env.WEB_FETCH_ALLOWLIST || "")
   .split(",")
@@ -199,6 +202,29 @@ async function fetchUrlText(rawUrl) {
   }
 }
 
+async function sendTelegramMessage(chatId, text) {
+  if (!TELEGRAM_BOT_TOKEN) {
+    throw new Error("TELEGRAM_BOT_TOKEN is missing");
+  }
+
+  const response = await fetch(`https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      chat_id: chatId,
+      text: text || "Порожня відповідь.",
+      disable_web_page_preview: true,
+    }),
+  });
+
+  if (!response.ok) {
+    const body = await response.text();
+    throw new Error(`Telegram sendMessage failed (${response.status}): ${body}`);
+  }
+
+  return response.json();
+}
+
 // Пошук потрібного субагента за ключовими словами
 function identifyAgentByKeywords(prompt, config) {
   const lowPrompt = prompt.toLowerCase();
@@ -282,8 +308,61 @@ app.post("/scrape", async (req, res) => {
   }
 });
 
+app.post("/telegram/send", async (req, res) => {
+  try {
+    const chatId = req.body?.chat_id;
+    const text = req.body?.text;
+    if (!chatId || typeof text !== "string" || !text.trim()) {
+      return res.status(400).json({ status: "error", message: "Fields 'chat_id' and non-empty 'text' are required." });
+    }
+
+    const result = await sendTelegramMessage(chatId, text.trim());
+    return res.json({ status: "ok", result });
+  } catch (error) {
+    console.error(error);
+    return res.status(500).json({ status: "error", message: error.message || "Telegram send failed" });
+  }
+});
+
+app.post("/telegram/webhook", async (req, res) => {
+  try {
+    const message = req.body?.message;
+    const chatId = message?.chat?.id;
+    const text = message?.text;
+
+    if (!chatId || typeof text !== "string" || !text.trim()) {
+      return res.json({ status: "ignored", reason: "No text message" });
+    }
+
+    const urls = extractUrlsFromText(text);
+    const agentPayload = {
+      message: text.trim(),
+      urls,
+      use_scrape: true,
+      scrape_mode: "get",
+      use_web: false,
+    };
+
+    const agentRes = await fetch(`http://127.0.0.1:${PORT}/agent`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json; charset=utf-8" },
+      body: JSON.stringify(agentPayload),
+    });
+
+    const replyText = await agentRes.text();
+    const safeReply = (replyText || "").trim() || "Не вдалося підготувати відповідь.";
+    await sendTelegramMessage(chatId, safeReply.slice(0, 3900));
+
+    return res.json({ status: "ok" });
+  } catch (error) {
+    console.error(error);
+    return res.status(500).json({ status: "error", message: error.message || "Webhook processing failed" });
+  }
+});
+
 app.post("/agent", async (req, res) => {
   try {
+    console.log("AGENT_BODY:", JSON.stringify(req.body));
     const prompt = req.body?.message ?? req.body?.prompt;
     if (typeof prompt !== "string" || !prompt.trim()) {
       return res.status(400).type("text/plain").send("Field 'message' or 'prompt' is required.");
@@ -396,5 +475,4 @@ app.get("/capabilities", async (_req, res) => {
   }
 });
 
-const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => console.log(`Engine started on port ${PORT}`));

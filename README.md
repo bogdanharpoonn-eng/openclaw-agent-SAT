@@ -30,6 +30,8 @@ npm start
 | `SCRAPLING_BIN` | Шлях до бінарника Scrapling (за замовчуванням `scrapling`). |
 | `SCRAPE_TIMEOUT_MS` | Таймаут запуску Scrapling у мс (за замовчуванням `45000`). |
 | `SCRAPLING_NO_VERIFY` | Якщо `true`, Scrapling запускається з `--no-verify` (корисно при локальній SSL-проблемі сертифікатів). |
+| `TELEGRAM_BOT_TOKEN` | Токен Telegram-бота для endpoint-ів `/telegram/*`. |
+| `BASE_URL` | Публічний URL сервісу (використовується для налаштування webhook). |
 
 ## API
 
@@ -75,6 +77,19 @@ npm start
 ### `GET /capabilities`
 
 Список агентів з `agents.json` у вигляді тексту (ім’я, id, опис).
+
+### `POST /telegram/webhook`
+
+Приймає webhook-повідомлення від Telegram, викликає `/agent`, і надсилає відповідь назад у чат через Telegram Bot API.
+
+### `POST /telegram/send`
+
+Ручна відправка повідомлення в Telegram-чат.
+
+**Тіло (JSON):**
+
+- `chat_id` (обов’язково)
+- `text` (обов’язково)
 
 ## Як обирається агент
 
