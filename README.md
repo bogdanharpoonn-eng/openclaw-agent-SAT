@@ -32,6 +32,10 @@ npm start
 | `SCRAPLING_NO_VERIFY` | Якщо `true`, Scrapling запускається з `--no-verify` (корисно при локальній SSL-проблемі сертифікатів). |
 | `TELEGRAM_BOT_TOKEN` | Токен Telegram-бота для endpoint-ів `/telegram/*`. |
 | `BASE_URL` | Публічний URL сервісу (використовується для налаштування webhook). |
+| `TELEGRAM_CHAT_ALLOWLIST` | Список дозволених `chat_id` через кому. Якщо порожньо — дозволені всі чати. |
+| `TELEGRAM_RATE_LIMIT_WINDOW_MS` | Вікно rate limit у мс (за замовчуванням `60000`). |
+| `TELEGRAM_RATE_LIMIT_MAX` | Максимум повідомлень на `chat_id` за вікно (за замовчуванням `20`). |
+| `ERROR_LOG_FILE` | Шлях до файлу логів помилок (за замовчуванням `logs/errors.log`). |
 
 ## API
 

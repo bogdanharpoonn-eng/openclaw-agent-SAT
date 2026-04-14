@@ -19,11 +19,19 @@ const SCRAPLING_NO_VERIFY = String(process.env.SCRAPLING_NO_VERIFY || "").toLowe
 const TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || "";
 const BASE_URL = process.env.BASE_URL || "";
 const PORT = process.env.PORT || 3000;
+const TELEGRAM_CHAT_ALLOWLIST = (process.env.TELEGRAM_CHAT_ALLOWLIST || "")
+  .split(",")
+  .map(s => s.trim())
+  .filter(Boolean);
+const TELEGRAM_RATE_LIMIT_WINDOW_MS = Number(process.env.TELEGRAM_RATE_LIMIT_WINDOW_MS || 60000);
+const TELEGRAM_RATE_LIMIT_MAX = Number(process.env.TELEGRAM_RATE_LIMIT_MAX || 20);
+const ERROR_LOG_FILE = process.env.ERROR_LOG_FILE || path.join(process.cwd(), "logs", "errors.log");
 const execFileAsync = promisify(execFile);
 const WEB_FETCH_ALLOWLIST = (process.env.WEB_FETCH_ALLOWLIST || "")
   .split(",")
   .map(s => s.trim().toLowerCase())
   .filter(Boolean);
+const telegramRateBucket = new Map();
 
 // Завантаження конфігурації агентів
 async function getAgentsConfig() {
@@ -225,6 +233,38 @@ async function sendTelegramMessage(chatId, text) {
   return response.json();
 }
 
+function isAllowedTelegramChat(chatId) {
+  if (TELEGRAM_CHAT_ALLOWLIST.length === 0) return true;
+  return TELEGRAM_CHAT_ALLOWLIST.includes(String(chatId));
+}
+
+function consumeTelegramRateLimit(chatId) {
+  const key = String(chatId);
+  const now = Date.now();
+  const row = telegramRateBucket.get(key) || { count: 0, windowStart: now };
+  if (now - row.windowStart >= TELEGRAM_RATE_LIMIT_WINDOW_MS) {
+    row.count = 0;
+    row.windowStart = now;
+  }
+  row.count += 1;
+  telegramRateBucket.set(key, row);
+  return row.count <= TELEGRAM_RATE_LIMIT_MAX;
+}
+
+async function logError(event, details) {
+  try {
+    await fs.mkdir(path.dirname(ERROR_LOG_FILE), { recursive: true });
+    const line = JSON.stringify({
+      ts: new Date().toISOString(),
+      event,
+      ...details,
+    });
+    await fs.appendFile(ERROR_LOG_FILE, `${line}\n`, "utf-8");
+  } catch {
+    // Do not fail request due to logging failure.
+  }
+}
+
 // Пошук потрібного субагента за ключовими словами
 function identifyAgentByKeywords(prompt, config) {
   const lowPrompt = prompt.toLowerCase();
@@ -334,6 +374,16 @@ app.post("/telegram/webhook", async (req, res) => {
       return res.json({ status: "ignored", reason: "No text message" });
     }
 
+    if (!isAllowedTelegramChat(chatId)) {
+      await logError("telegram_blocked_chat", { chat_id: String(chatId) });
+      return res.json({ status: "ignored", reason: "chat is not allowlisted" });
+    }
+
+    if (!consumeTelegramRateLimit(chatId)) {
+      await sendTelegramMessage(chatId, "Забагато запитів. Спробуйте ще раз через хвилину.");
+      return res.json({ status: "rate_limited" });
+    }
+
     const urls = extractUrlsFromText(text);
     const agentPayload = {
       message: text.trim(),
@@ -356,6 +406,9 @@ app.post("/telegram/webhook", async (req, res) => {
     return res.json({ status: "ok" });
   } catch (error) {
     console.error(error);
+    await logError("telegram_webhook_error", {
+      message: error.message || "Webhook processing failed",
+    });
     return res.status(500).json({ status: "error", message: error.message || "Webhook processing failed" });
   }
 });
