@@ -343,8 +343,29 @@ app.post("/scrape", async (req, res) => {
 
     return res.json({ status: "ok", ...result });
   } catch (error) {
-    console.error(error);
+    console.error("SCRAPE_ERROR_DETAILS:", error.message || error);
     return res.status(500).json({ status: "error", message: error.message || "Scrape failed" });
+  }
+});
+
+app.get("/health/scrapling", async (_req, res) => {
+  try {
+    const result = await runScraplingExtract({
+      rawUrl: "https://example.com",
+      mode: "get",
+      timeoutMs: Math.min(SCRAPE_TIMEOUT_MS, 20000),
+    });
+    return res.json({
+      status: "ok",
+      scrapling_bin: SCRAPLING_BIN,
+      preview: result.content.slice(0, 120),
+    });
+  } catch (error) {
+    return res.status(500).json({
+      status: "error",
+      scrapling_bin: SCRAPLING_BIN,
+      message: error.message || "Scrapling health failed",
+    });
   }
 });
 
