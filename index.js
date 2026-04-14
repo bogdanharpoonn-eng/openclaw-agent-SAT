@@ -167,6 +167,23 @@ async function runScraplingExtract({
     const stderr = error?.stderr?.toString?.() || "";
     const stdout = error?.stdout?.toString?.() || "";
     const details = [stderr, stdout].filter(Boolean).join(" ").trim();
+
+    // Runtime compatibility guard:
+    // some Scrapling/curl_cffi combos fail for `get` with "unexpected keyword argument 'block_ads'".
+    // Retry once with browser-based `fetch` automatically.
+    if (
+      mode === "get" &&
+      details.includes("unexpected keyword argument 'block_ads'")
+    ) {
+      return runScraplingExtract({
+        rawUrl: check.url,
+        mode: "fetch",
+        cssSelector,
+        timeoutMs,
+        waitSelector,
+      });
+    }
+
     if (details.includes("not recognized") || details.includes("ENOENT")) {
       throw new Error("Scrapling binary is not available. Install Scrapling and set SCRAPLING_BIN if needed.");
     }
