@@ -18,6 +18,18 @@ npm start
 
 За замовчуванням сервер слухає порт **3000** (змінити: `PORT=8080`).
 
+## Railway (Docker) для Scrapling
+
+Щоб `web_scraping_agent` реально працював у Railway, потрібні Python + Scrapling у runtime.  
+У цьому репозиторії є `Dockerfile` (Node + Python + Scrapling), тому рекомендується запуск саме через Docker deploy.
+
+Мінімум змінних у Railway:
+- `OPENAI_API_KEY`
+- `TELEGRAM_BOT_TOKEN`
+- `BASE_URL`
+- `SCRAPLING_BIN=/usr/local/bin/scrapling`
+- `SCRAPLING_NO_VERIFY=true` (за потреби, якщо є SSL-проблеми)
+
 ## Змінні середовища
 
 | Змінна | Опис |
