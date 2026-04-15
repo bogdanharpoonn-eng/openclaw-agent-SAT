@@ -6,28 +6,26 @@
     "prompt_file": "chat_assistant.txt",
     "use_schema": false
   },
-  "web_scraping_agent": {
-    "display_name": "Web Scraping Agent",
-    "description": "Профільний субагент для задач зі скрейпінгу сайтів, витягання структурованих даних і перевірки веб-джерел.",
+  "WEB_NEWS_Agent": {
+    "display_name": "WEB_NEWS_Agent",
+    "description": "Профільний субагент для веб-ресерчу та новинних дайджестів у стилі executive briefing.",
     "keywords": [
-      "скрейп",
-      "scraping",
-      "crawl",
-      "crawler",
-      "парсинг",
-      "веб-дані",
-      "витягни з сайту",
-      "ціни",
-      "ціна",
-      "пальне",
-      "ціни пального",
-      "okko",
-      "wog",
-      "xpath",
-      "css selector",
-      "playwright"
+      "новини",
+      "дайджест",
+      "тренди",
+      "що нового",
+      "що важливо",
+      "ai news",
+      "research",
+      "огляд",
+      "що знати",
+      "оновлення",
+      "perplexity",
+      "briefing",
+      "шi",
+      "штучний інтелект"
     ],
-    "prompt_file": "web_scraping_agent.txt",
+    "prompt_file": "web_news_agent.txt",
     "use_schema": false
   }
 }
