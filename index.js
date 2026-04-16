@@ -114,6 +114,26 @@ function getPresetUrlsForQuery(text) {
   return [];
 }
 
+function buildRuntimeContext() {
+  const now = new Date();
+  const nowIso = now.toISOString();
+  const uaDate = new Intl.DateTimeFormat("uk-UA", {
+    timeZone: "Europe/Kyiv",
+    weekday: "long",
+    year: "numeric",
+    month: "long",
+    day: "numeric",
+  }).format(now);
+  return [
+    "Runtime context (must be treated as source of truth):",
+    "- user_name: Богдан",
+    `- current_datetime_iso_utc: ${nowIso}`,
+    `- current_date_kyiv: ${uaDate}`,
+    "- Address the user as 'Богдан' naturally in responses (without overusing it in every sentence).",
+    "- If user asks 'яка сьогодні дата', use current_date_kyiv from this context, not model memory.",
+  ].join("\n");
+}
+
 function fixMojibake(text) {
   if (typeof text !== "string" || text.length === 0) return text;
   // Heuristic: recover UTF-8 text that was misread as Latin-1/Windows-1252.
@@ -563,9 +583,10 @@ app.post("/agent", async (req, res) => {
       "utf-8"
     );
 
-    const dynamicSystemInstruction = agentId === "general_assistant"
+    const agentSystemInstruction = agentId === "general_assistant"
       ? `${systemInstruction}\n\nАктуальні профільні помічники (з конфігу):\n${buildCapabilitiesText(config)}`
       : systemInstruction;
+    const dynamicSystemInstruction = `${agentSystemInstruction}\n\n${buildRuntimeContext()}`;
 
     const requestUrls = Array.isArray(req.body?.urls) ? req.body.urls.filter(u => typeof u === "string" && u.trim()) : [];
     const extractedUrls = requestUrls.length === 0 ? extractUrlsFromText(prompt) : [];
