@@ -99,6 +99,21 @@ function extractUrlsFromText(text) {
   return [...new Set(normalized)];
 }
 
+function getPresetUrlsForQuery(text) {
+  if (typeof text !== "string") return [];
+  const lower = text.toLowerCase();
+
+  const isNbuCurrencyRequest =
+    (lower.includes("нацбанк") || lower.includes("нбу") || lower.includes("national bank")) &&
+    (lower.includes("курс") || lower.includes("валют"));
+
+  if (isNbuCurrencyRequest) {
+    return ["https://bank.gov.ua/NBUStatService/v1/statdirectory/exchange?json"];
+  }
+
+  return [];
+}
+
 function fixMojibake(text) {
   if (typeof text !== "string" || text.length === 0) return text;
   // Heuristic: recover UTF-8 text that was misread as Latin-1/Windows-1252.
@@ -495,13 +510,16 @@ app.post("/telegram/webhook", async (req, res) => {
       return res.json({ status: "ignored", reason: "No text or voice message" });
     }
 
-    const urls = extractUrlsFromText(text);
+    const urls = [...new Set([
+      ...extractUrlsFromText(text),
+      ...getPresetUrlsForQuery(text),
+    ])];
     const agentPayload = {
       message: text.trim(),
       urls,
       use_scrape: true,
       scrape_mode: "get",
-      use_web: false,
+      use_web: urls.length > 0,
     };
 
     const agentRes = await fetch(`http://127.0.0.1:${PORT}/agent`, {
