@@ -47,6 +47,8 @@ npm start
 | `TELEGRAM_CHAT_ALLOWLIST` | Список дозволених `chat_id` через кому. Якщо порожньо — дозволені всі чати. |
 | `TELEGRAM_RATE_LIMIT_WINDOW_MS` | Вікно rate limit у мс (за замовчуванням `60000`). |
 | `TELEGRAM_RATE_LIMIT_MAX` | Максимум повідомлень на `chat_id` за вікно (за замовчуванням `20`). |
+| `TELEGRAM_VOICE_MAX_BYTES` | Максимальний розмір голосового файлу для розпізнавання (за замовчуванням `26214400`, ліміт Whisper ~25 MB). |
+| `WHISPER_LANGUAGE` | Опційно: код мови для Whisper (наприклад `uk`). Якщо не задано — авто. |
 | `ERROR_LOG_FILE` | Шлях до файлу логів помилок (за замовчуванням `logs/errors.log`). |
 
 ## API
@@ -96,7 +98,7 @@ npm start
 
 ### `POST /telegram/webhook`
 
-Приймає webhook-повідомлення від Telegram, викликає `/agent`, і надсилає відповідь назад у чат через Telegram Bot API.
+Приймає webhook-повідомлення від Telegram, викликає `/agent`, і надсилає відповідь назад у чат через Telegram Bot API. Підтримуються **текстові** повідомлення та **голосові** (`voice`): аудіо завантажується з Telegram і транскрибується через **OpenAI Whisper** (`whisper-1`, потрібен `OPENAI_API_KEY`).
 
 ### `POST /telegram/send`
 

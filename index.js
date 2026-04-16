@@ -1,6 +1,7 @@
 import express from "express";
 import OpenAI from "openai";
 import fs from "fs/promises";
+import { createReadStream } from "fs";
 import path from "path";
 import os from "os";
 import { execFile } from "child_process";
@@ -26,6 +27,7 @@ const TELEGRAM_CHAT_ALLOWLIST = (process.env.TELEGRAM_CHAT_ALLOWLIST || "")
 const TELEGRAM_RATE_LIMIT_WINDOW_MS = Number(process.env.TELEGRAM_RATE_LIMIT_WINDOW_MS || 60000);
 const TELEGRAM_RATE_LIMIT_MAX = Number(process.env.TELEGRAM_RATE_LIMIT_MAX || 20);
 const ERROR_LOG_FILE = process.env.ERROR_LOG_FILE || path.join(process.cwd(), "logs", "errors.log");
+const TELEGRAM_VOICE_MAX_BYTES = Number(process.env.TELEGRAM_VOICE_MAX_BYTES || 25 * 1024 * 1024);
 const execFileAsync = promisify(execFile);
 const WEB_FETCH_ALLOWLIST = (process.env.WEB_FETCH_ALLOWLIST || "")
   .split(",")
@@ -227,6 +229,53 @@ async function fetchUrlText(rawUrl) {
   }
 }
 
+async function getTelegramFilePath(fileId) {
+  const url = `https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/getFile?file_id=${encodeURIComponent(fileId)}`;
+  const response = await fetch(url);
+  const data = await response.json();
+  if (!data.ok || !data.result?.file_path) {
+    throw new Error(data.description || "Telegram getFile failed");
+  }
+  return data.result.file_path;
+}
+
+async function downloadTelegramFile(filePath) {
+  const url = `https://api.telegram.org/file/bot${TELEGRAM_BOT_TOKEN}/${filePath}`;
+  const response = await fetch(url);
+  if (!response.ok) {
+    throw new Error(`Telegram file download failed (${response.status})`);
+  }
+  return Buffer.from(await response.arrayBuffer());
+}
+
+async function transcribeTelegramVoice(fileId) {
+  const remotePath = await getTelegramFilePath(fileId);
+  const buffer = await downloadTelegramFile(remotePath);
+  if (buffer.length > TELEGRAM_VOICE_MAX_BYTES) {
+    throw new Error("Voice file is too large for transcription (max ~25 MB).");
+  }
+  const ext = path.extname(remotePath) || ".ogg";
+  const tmpPath = path.join(os.tmpdir(), `tg-voice-${Date.now()}-${fileId.slice(0, 8)}${ext}`);
+  await fs.writeFile(tmpPath, buffer);
+  try {
+    const whisperOpts = {
+      file: createReadStream(tmpPath),
+      model: "whisper-1",
+    };
+    if (process.env.WHISPER_LANGUAGE?.trim()) {
+      whisperOpts.language = process.env.WHISPER_LANGUAGE.trim();
+    }
+    const transcription = await client.audio.transcriptions.create(whisperOpts);
+    const text = transcription.text?.trim() || "";
+    if (!text) {
+      throw new Error("Empty transcription");
+    }
+    return text;
+  } finally {
+    await fs.unlink(tmpPath).catch(() => {});
+  }
+}
+
 async function sendTelegramMessage(chatId, text) {
   if (!TELEGRAM_BOT_TOKEN) {
     throw new Error("TELEGRAM_BOT_TOKEN is missing");
@@ -406,10 +455,9 @@ app.post("/telegram/webhook", async (req, res) => {
   try {
     const message = req.body?.message;
     const chatId = message?.chat?.id;
-    const text = message?.text;
 
-    if (!chatId || typeof text !== "string" || !text.trim()) {
-      return res.json({ status: "ignored", reason: "No text message" });
+    if (!chatId) {
+      return res.json({ status: "ignored", reason: "No chat id" });
     }
 
     if (!isAllowedTelegramChat(chatId)) {
@@ -420,6 +468,31 @@ app.post("/telegram/webhook", async (req, res) => {
     if (!consumeTelegramRateLimit(chatId)) {
       await sendTelegramMessage(chatId, "Забагато запитів. Спробуйте ще раз через хвилину.");
       return res.json({ status: "rate_limited" });
+    }
+
+    let text = typeof message?.text === "string" ? message.text.trim() : "";
+    const caption = typeof message?.caption === "string" ? message.caption.trim() : "";
+
+    if (!text && message?.voice?.file_id) {
+      if (!TELEGRAM_BOT_TOKEN) {
+        await sendTelegramMessage(chatId, "Бот не налаштований: немає TELEGRAM_BOT_TOKEN.");
+        return res.json({ status: "error", reason: "missing_token" });
+      }
+      try {
+        text = (await transcribeTelegramVoice(message.voice.file_id)).trim();
+        if (caption) {
+          text = `${text}\n\n${caption}`;
+        }
+      } catch (err) {
+        const msg = err?.message || "Transcription failed";
+        await sendTelegramMessage(chatId, `Не вдалося розпізнати голос: ${msg}`);
+        await logError("telegram_voice_transcription", { chat_id: String(chatId), message: msg });
+        return res.json({ status: "error", reason: "transcription_failed" });
+      }
+    }
+
+    if (!text) {
+      return res.json({ status: "ignored", reason: "No text or voice message" });
     }
 
     const urls = extractUrlsFromText(text);
