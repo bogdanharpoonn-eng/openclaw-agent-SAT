@@ -138,24 +138,54 @@ async function publicGet(endpoint, query = {}) {
   return data.result;
 }
 
+export async function getFundingUsdtSnapshot() {
+  try {
+    const result = await signedRequest("GET", "/v5/asset/transfer/query-account-coins-balance", {
+      accountType: "FUND",
+      coin: "USDT",
+    });
+    const row = Array.isArray(result?.balance)
+      ? result.balance.find(c => c.coin === "USDT") || result.balance[0]
+      : null;
+    const wallet = Number(row?.walletBalance || 0);
+    const transfer = Number(row?.transferBalance || wallet);
+    return {
+      walletUsdt: Number.isFinite(wallet) ? wallet : 0,
+      transferUsdt: Number.isFinite(transfer) ? transfer : 0,
+    };
+  } catch {
+    return { walletUsdt: 0, transferUsdt: 0 };
+  }
+}
+
 export async function getSpotUsdtSnapshot() {
   const result = await signedRequest("GET", "/v5/account/wallet-balance", {
     accountType: ACCOUNT_TYPE,
+    coin: "USDT",
   });
   const row = result?.list?.[0];
   if (!row) {
-    return { equityUsdt: 0, availableUsdt: 0, coins: [] };
+    return { equityUsdt: 0, availableUsdt: 0, coins: [], funding: await getFundingUsdtSnapshot() };
   }
 
   const coins = Array.isArray(row.coin) ? row.coin : [];
   const usdt = coins.find(c => c.coin === "USDT") || {};
-  const availableUsdt = Number(usdt.availableToWithdraw || usdt.walletBalance || 0);
-  const equityUsdt = Number(row.totalEquityUsd || row.totalWalletBalance || availableUsdt);
+  const coinEquity = Number(usdt.equity || usdt.walletBalance || 0);
+  const equityUsdt = Number(row.totalEquity || row.totalWalletBalance || coinEquity);
+  const availableUsdt = Number(
+    row.totalAvailableBalance ||
+    usdt.equity ||
+    usdt.walletBalance ||
+    usdt.availableToWithdraw ||
+    0
+  );
+  const funding = await getFundingUsdtSnapshot();
 
   return {
-    equityUsdt: Number.isFinite(equityUsdt) ? equityUsdt : availableUsdt,
+    equityUsdt: Number.isFinite(equityUsdt) ? equityUsdt : 0,
     availableUsdt: Number.isFinite(availableUsdt) ? availableUsdt : 0,
     coins,
+    funding,
   };
 }
 
@@ -222,6 +252,8 @@ export async function refreshStatus() {
     symbol: DEFAULT_SYMBOL,
     equityUsdt,
     availableUsdt: snapshot.availableUsdt,
+    fundingUsdt: snapshot.funding?.walletUsdt || 0,
+    fundingTransferUsdt: snapshot.funding?.transferUsdt || 0,
     dayStartEquityUsdt: state.dayStartEquityUsdt,
     dayPnlUsdt,
     dayPnlPct,
@@ -323,14 +355,19 @@ export async function buildAgentContext() {
   }
   try {
     const status = await refreshStatus();
+    const snapshot = await getSpotUsdtSnapshot();
     const ticker = await getSpotTicker(status.symbol);
     return [
       "Дані Bybit SPOT (джерело правди, не вигадуй):",
       `- Режим: ${status.testnet ? "TESTNET" : "MAINNET"}`,
       `- Символ за замовчуванням: ${status.symbol}`,
       `- Ціна: ${ticker.lastPrice}`,
-      `- Equity USDT: ${status.equityUsdt}`,
-      `- Доступно USDT: ${status.availableUsdt}`,
+      `- Unified equity USDT: ${status.equityUsdt}`,
+      `- Unified доступно USDT: ${status.availableUsdt}`,
+      snapshot.funding?.walletUsdt > 0 ? `- Funding USDT: ${snapshot.funding.walletUsdt}` : "",
+      status.availableUsdt <= 0 && snapshot.funding?.transferUsdt > 0
+        ? "- Потрібен Transfer: Funding → Unified Trading"
+        : "",
       `- PnL за день: ${status.dayPnlUsdt.toFixed(2)} USDT (${status.dayPnlPct.toFixed(2)}%)`,
       `- Торгівля дозволена: ${status.tradingStopped ? "НІ" : "ТАК"}`,
       status.tradingStopped ? `- Причина стопу: ${status.stopReason}` : "",
@@ -359,11 +396,16 @@ export async function getStatusText() {
   } catch (err) {
     throw new Error(err?.message || "Bybit API request failed");
   }
+  const fundingHint = status.availableUsdt <= 0 && status.fundingTransferUsdt > 0
+    ? "⚠️ USDT на Funding — Transfer → Unified Trading"
+    : "";
   return [
     `Bybit ${status.testnet ? "TESTNET" : "MAINNET"} (${ACCOUNT_TYPE}, spot trades)`,
     `Символ: ${status.symbol} | Ціна: ${ticker.lastPrice}`,
-    `Equity: ${status.equityUsdt.toFixed(2)} USDT`,
-    `Доступно: ${status.availableUsdt.toFixed(2)} USDT`,
+    `Unified equity: ${status.equityUsdt.toFixed(2)} USDT`,
+    `Unified доступно: ${status.availableUsdt.toFixed(2)} USDT`,
+    status.fundingUsdt > 0 ? `Funding USDT: ${status.fundingUsdt.toFixed(2)}` : "",
+    fundingHint,
     `PnL день: ${status.dayPnlPct.toFixed(2)}% (${status.dayPnlUsdt.toFixed(2)} USDT)`,
     `Торгівля: ${status.tradingStopped ? "ЗУПИНЕНО" : "АКТИВНА"}`,
     status.tradingStopped ? `Причина: ${status.stopReason}` : "",
@@ -471,6 +513,7 @@ export function getPublicConfig() {
     autoMonitor: AUTO_MONITOR,
     autoTrade: AUTO_TRADE,
     symbol: DEFAULT_SYMBOL,
+    accountType: ACCOUNT_TYPE,
     configured: isConfigured(),
     strategy: getStrategyConfig(),
   };
