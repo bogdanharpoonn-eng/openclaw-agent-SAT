@@ -399,14 +399,16 @@ app.get("/health", async (_req, res) => {
     service: "openclaw-agent-SAT",
     bybit: bybit.isConfigured(),
     railwayRegion: process.env.RAILWAY_REPLICA_REGION || process.env.RAILWAY_REGION || null,
+    ...bybit.isConfigured() ? bybit.getBybitApiConfig() : {},
   };
   if (bybit.isConfigured()) {
     try {
-      await bybit.probeBybitReachability();
+      const probe = await bybit.probeBybitReachability();
       payload.bybitApi = "ok";
+      payload.bybitApiBase = probe.baseUrl;
     } catch (err) {
       payload.bybitApi = "blocked";
-      payload.bybitApiHint = String(err?.message || err).slice(0, 200);
+      payload.bybitApiHint = String(err?.message || err).slice(0, 280);
     }
   }
   res.json(payload);

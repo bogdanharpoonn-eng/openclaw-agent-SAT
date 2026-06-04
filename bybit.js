@@ -1,6 +1,7 @@
 import crypto from "crypto";
 import fs from "fs/promises";
 import path from "path";
+import { ProxyAgent } from "undici";
 import {
   ensureStrategyState,
   evaluateStrategy,
@@ -12,7 +13,55 @@ import {
 } from "./bybit-strategy.js";
 
 const TESTNET = String(process.env.BYBIT_TESTNET || "true").toLowerCase() === "true";
-const BASE_URL = TESTNET ? "https://api-testnet.bybit.com" : "https://api.bybit.com";
+
+const API_BASES = {
+  testnet: {
+    global: "https://api-testnet.bybit.com",
+    eu: "https://api-testnet.bybit.eu",
+  },
+  mainnet: {
+    global: "https://api.bybit.com",
+    eu: "https://api.bybit.eu",
+  },
+};
+
+export function resolveBybitBaseUrl() {
+  const custom = (process.env.BYBIT_API_BASE_URL || "").trim();
+  if (custom) return custom.replace(/\/$/, "");
+  const region = (process.env.BYBIT_API_REGION || "eu").trim().toLowerCase();
+  const map = TESTNET ? API_BASES.testnet : API_BASES.mainnet;
+  return map[region] || map.global;
+}
+
+function getBaseUrl() {
+  return resolveBybitBaseUrl();
+}
+
+let proxyAgent = null;
+
+function getProxyUrl() {
+  return (process.env.BYBIT_HTTPS_PROXY || process.env.HTTPS_PROXY || "").trim();
+}
+
+function getFetchOptions(init = {}) {
+  const proxy = getProxyUrl();
+  if (!proxy) return init;
+  if (!proxyAgent) proxyAgent = new ProxyAgent(proxy);
+  return { ...init, dispatcher: proxyAgent };
+}
+
+async function bybitFetch(url, init = {}) {
+  return fetch(url, getFetchOptions(init));
+}
+
+export function getBybitApiConfig() {
+  return {
+    testnet: TESTNET,
+    baseUrl: getBaseUrl(),
+    region: (process.env.BYBIT_API_REGION || "eu").trim().toLowerCase(),
+    proxy: Boolean(getProxyUrl()),
+  };
+}
 const STATE_FILE = process.env.BYBIT_STATE_FILE || path.join(process.cwd(), "data", "bybit-state.json");
 const DAILY_LOSS_LIMIT_PCT = Number(process.env.BYBIT_DAILY_LOSS_LIMIT_PCT || 10);
 const MAX_TRADE_PCT = Number(process.env.BYBIT_MAX_TRADE_PCT || 30);
@@ -42,7 +91,7 @@ export function isConfigured() {
 /** Public Bybit ping — fails with CloudFront 403 if deploy region is blocked. */
 export async function probeBybitReachability() {
   await publicGet("/v5/market/time");
-  return { ok: true, testnet: TESTNET };
+  return { ok: true, ...getBybitApiConfig() };
 }
 
 async function parseBybitResponse(response, context) {
@@ -51,9 +100,12 @@ async function parseBybitResponse(response, context) {
     throw new Error(`${context}: empty response (HTTP ${response.status})`);
   }
   if (response.status === 403 && /cloudfront|block access from your country/i.test(raw)) {
+    const proxyHint = getProxyUrl()
+      ? ""
+      : " Bybit часто блокує IP хмар (Railway/AWS) навіть у EU — додай BYBIT_HTTPS_PROXY (статичний egress) або VPS (Hetzner).";
     throw new Error(
-      `${context}: Bybit CloudFront 403 — сервер у заблокованому регіоні. ` +
-      "Railway → Service → Settings → Region: **EU West (Amsterdam)**, не US West. Потім Redeploy."
+      `${context}: Bybit CloudFront 403 — IP сервера в deny-list CDN.${proxyHint} ` +
+      `Endpoint: ${getBaseUrl()}.`
     );
   }
   try {
@@ -122,7 +174,7 @@ async function signedRequest(method, endpoint, query = {}, body = null) {
 
   const timestamp = Date.now().toString();
   const recvWindow = "5000";
-  let url = `${BASE_URL}${endpoint}`;
+  let url = `${getBaseUrl()}${endpoint}`;
   let signPayload = "";
 
   if (method === "GET") {
@@ -143,7 +195,7 @@ async function signedRequest(method, endpoint, query = {}, body = null) {
     "Content-Type": "application/json",
   };
 
-  const response = await fetch(url, {
+  const response = await bybitFetch(url, {
     method,
     headers,
     body: method === "GET" ? undefined : (body == null ? undefined : JSON.stringify(body)),
@@ -157,8 +209,8 @@ async function signedRequest(method, endpoint, query = {}, body = null) {
 
 async function publicGet(endpoint, query = {}) {
   const qs = new URLSearchParams(query).toString();
-  const url = `${BASE_URL}${endpoint}${qs ? `?${qs}` : ""}`;
-  const response = await fetch(url);
+  const url = `${getBaseUrl()}${endpoint}${qs ? `?${qs}` : ""}`;
+  const response = await bybitFetch(url);
   const data = await parseBybitResponse(response, `GET ${endpoint}`);
   if (data.retCode !== 0) {
     throw new Error(data.retMsg || `Bybit public API error ${data.retCode}`);

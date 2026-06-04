@@ -8,16 +8,16 @@ Telegram-бот + HTTP API для **Bybit SPOT** (testnet/mainnet): баланс
 
 `Dockerfile` — Node.js only. Healthcheck: `GET /health`.
 
-**Важливо — регіон деплою:** Bybit API (CloudFront) **блокує US** (HTTP 403). У репозиторії є `railway.toml` → **EU West Metal (Amsterdam)**. Після push зроби **Redeploy**.
+**Bybit 403 на Railway (навіть EU West):** регіон Amsterdam у тебе вже ок (`railwayRegion: europe-west4-drams3a`). Bybit CloudFront **блокує IP багатьох хмар** (Railway, AWS, Heroku), не лише США.
 
-Якщо 403 лишається — вручну в Railway:
-1. Сервіс → **Settings** → прокрути до **Scale** → **Regions**
-2. Видали **US West / US East** (якщо є кілька регіонів / replicas)
-3. Лиш **EU West Metal** (`europe-west4-drams3a`), **1 replica**
-4. **Account Settings** → Preferred region → **EU West**
-5. **Deploy → Redeploy**
+**Що спробувати по черзі:**
+1. Redeploy з останнього коду — за замовчуванням `BYBIT_API_REGION=eu` → `https://api-testnet.bybit.eu`
+2. API-ключі з **https://testnet.bybit.eu** (якщо були з `.com` — створи нові на EU testnet)
+3. Якщо `/health` все ще `"bybitApi":"blocked"` — **статичний проксі** в Railway Variables:
+   - `BYBIT_HTTPS_PROXY=http://user:pass@host:port` (QuotaGuard, VPS nginx, тощо)
+4. Альтернатива: бот на **VPS** (Hetzner тощо), не PaaS — там Bybit зазвичай відповідає
 
-Перевірка: `GET /health` → `"bybitApi":"ok"` і `"railwayRegion"` з `europe`/`amsterdam`. `GET /bybit/status` — баланс без 403.
+Перевірка: `GET /health` → `"bybitApi":"ok"`, `"baseUrl":"https://api-testnet.bybit.eu"`.
 
 **Testnet coins:** інколи нараховують **USD**, а не USDT. Бот торгує пари на кшталт `BTCUSDT` — потрібен **USDT** на Unified (Convert USD→USDT або новий Request Test Coins з USDT).
 
