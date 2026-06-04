@@ -383,6 +383,16 @@ ${agentsHints}
   return availableAgents.includes(candidate) ? candidate : "general_assistant";
 }
 
+app.get("/", (_req, res) => {
+  res.json({
+    status: "ok",
+    service: "bybit-telegram-agent",
+    health: "/health",
+    telegram_webhook: "/telegram/webhook",
+    bybit: bybit.isConfigured(),
+  });
+});
+
 app.get("/health", (_req, res) => {
   res.json({
     status: "ok",
