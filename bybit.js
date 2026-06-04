@@ -26,8 +26,29 @@ const TIMEZONE = process.env.BYBIT_TIMEZONE || "Europe/Kyiv";
 let monitorTimer = null;
 let onMonitorAlert = null;
 
+function getApiKey() {
+  return (process.env.BYBIT_API_KEY || "").trim();
+}
+
+function getApiSecret() {
+  return (process.env.BYBIT_API_SECRET || "").trim();
+}
+
 export function isConfigured() {
-  return Boolean(process.env.BYBIT_API_KEY && process.env.BYBIT_API_SECRET);
+  return Boolean(getApiKey() && getApiSecret());
+}
+
+async function parseBybitResponse(response, context) {
+  const raw = await response.text();
+  if (!raw || !raw.trim()) {
+    throw new Error(`${context}: empty response (HTTP ${response.status})`);
+  }
+  try {
+    return JSON.parse(raw);
+  } catch {
+    const preview = raw.slice(0, 120).replace(/\s+/g, " ");
+    throw new Error(`${context}: not JSON (HTTP ${response.status}): ${preview}`);
+  }
 }
 
 function getDayKey() {
@@ -37,7 +58,9 @@ function getDayKey() {
 async function loadState() {
   try {
     const raw = await fs.readFile(STATE_FILE, "utf-8");
-    return JSON.parse(raw);
+    const parsed = JSON.parse(raw);
+    ensureStrategyState(parsed);
+    return parsed;
   } catch {
     return {
       dayKey: "",
@@ -62,8 +85,8 @@ async function saveState(state) {
 }
 
 async function signedRequest(method, endpoint, query = {}, body = null) {
-  const apiKey = process.env.BYBIT_API_KEY;
-  const apiSecret = process.env.BYBIT_API_SECRET;
+  const apiKey = getApiKey();
+  const apiSecret = getApiSecret();
   if (!apiKey || !apiSecret) {
     throw new Error("BYBIT_API_KEY / BYBIT_API_SECRET not configured");
   }
@@ -78,7 +101,7 @@ async function signedRequest(method, endpoint, query = {}, body = null) {
     signPayload = timestamp + apiKey + recvWindow + qs;
     if (qs) url += `?${qs}`;
   } else {
-    const bodyStr = JSON.stringify(body);
+    const bodyStr = body == null ? "" : JSON.stringify(body);
     signPayload = timestamp + apiKey + recvWindow + bodyStr;
   }
 
@@ -94,9 +117,9 @@ async function signedRequest(method, endpoint, query = {}, body = null) {
   const response = await fetch(url, {
     method,
     headers,
-    body: method === "GET" ? undefined : JSON.stringify(body),
+    body: method === "GET" ? undefined : (body == null ? undefined : JSON.stringify(body)),
   });
-  const data = await response.json();
+  const data = await parseBybitResponse(response, `${method} ${endpoint}`);
   if (data.retCode !== 0) {
     throw new Error(data.retMsg || `Bybit API error ${data.retCode}`);
   }
@@ -107,7 +130,7 @@ async function publicGet(endpoint, query = {}) {
   const qs = new URLSearchParams(query).toString();
   const url = `${BASE_URL}${endpoint}${qs ? `?${qs}` : ""}`;
   const response = await fetch(url);
-  const data = await response.json();
+  const data = await parseBybitResponse(response, `GET ${endpoint}`);
   if (data.retCode !== 0) {
     throw new Error(data.retMsg || `Bybit public API error ${data.retCode}`);
   }
