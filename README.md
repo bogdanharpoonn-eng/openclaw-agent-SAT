@@ -8,6 +8,10 @@ Telegram-бот + HTTP API для **Bybit SPOT** (testnet/mainnet): баланс
 
 `Dockerfile` — Node.js only. Healthcheck: `GET /health`.
 
+**Важливо — регіон деплою:** Bybit API (CloudFront) **блокує US West** і деякі інші регіони (HTTP 403 *block access from your country*). У Railway для сервісу вкажи **Region: EU West (Amsterdam)**, не US West. Після зміни регіону — **Redeploy**. Перевірка: `GET /bybit/status` має повертати баланс, не 403.
+
+**Testnet coins:** інколи нараховують **USD**, а не USDT. Бот торгує пари на кшталт `BTCUSDT` — потрібен **USDT** на Unified (Convert USD→USDT або новий Request Test Coins з USDT).
+
 **Обов’язкові змінні:**
 - `OPENAI_API_KEY`
 - `TELEGRAM_BOT_TOKEN`

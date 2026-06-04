@@ -44,12 +44,34 @@ async function parseBybitResponse(response, context) {
   if (!raw || !raw.trim()) {
     throw new Error(`${context}: empty response (HTTP ${response.status})`);
   }
+  if (response.status === 403 && /cloudfront|block access from your country/i.test(raw)) {
+    throw new Error(
+      `${context}: Bybit CloudFront 403 — сервер у заблокованому регіоні. ` +
+      "Railway → Service → Settings → Region: **EU West (Amsterdam)**, не US West. Потім Redeploy."
+    );
+  }
   try {
     return JSON.parse(raw);
   } catch {
     const preview = raw.slice(0, 120).replace(/\s+/g, " ");
     throw new Error(`${context}: not JSON (HTTP ${response.status}): ${preview}`);
   }
+}
+
+const FUNDING_STABLE_COINS = ["USDT", "USD"];
+
+function pickCoinRow(coins, coin) {
+  const list = Array.isArray(coins) ? coins : [];
+  return list.find(c => c.coin === coin) || {};
+}
+
+function coinAvailable(row) {
+  return Number(
+    row.equity ||
+    row.walletBalance ||
+    row.availableToWithdraw ||
+    0
+  );
 }
 
 function getDayKey() {
@@ -138,52 +160,76 @@ async function publicGet(endpoint, query = {}) {
   return data.result;
 }
 
-export async function getFundingUsdtSnapshot() {
+async function getFundingCoinSnapshot(coin) {
   try {
     const result = await signedRequest("GET", "/v5/asset/transfer/query-account-coins-balance", {
       accountType: "FUND",
-      coin: "USDT",
+      coin,
     });
     const row = Array.isArray(result?.balance)
-      ? result.balance.find(c => c.coin === "USDT") || result.balance[0]
+      ? result.balance.find(c => c.coin === coin) || result.balance[0]
       : null;
     const wallet = Number(row?.walletBalance || 0);
     const transfer = Number(row?.transferBalance || wallet);
     return {
-      walletUsdt: Number.isFinite(wallet) ? wallet : 0,
-      transferUsdt: Number.isFinite(transfer) ? transfer : 0,
+      coin,
+      wallet: Number.isFinite(wallet) ? wallet : 0,
+      transfer: Number.isFinite(transfer) ? transfer : 0,
     };
   } catch {
-    return { walletUsdt: 0, transferUsdt: 0 };
+    return { coin, wallet: 0, transfer: 0 };
   }
+}
+
+export async function getFundingUsdtSnapshot() {
+  return getFundingSnapshot();
+}
+
+export async function getFundingSnapshot() {
+  const parts = await Promise.all(FUNDING_STABLE_COINS.map(getFundingCoinSnapshot));
+  const byCoin = Object.fromEntries(parts.map(p => [p.coin, p]));
+  const walletUsdt = byCoin.USDT?.wallet || 0;
+  const walletUsd = byCoin.USD?.wallet || 0;
+  const transferUsdt = byCoin.USDT?.transfer || 0;
+  const transferUsd = byCoin.USD?.transfer || 0;
+  return {
+    walletUsdt,
+    transferUsdt: transferUsdt + transferUsd,
+    walletUsd,
+    transferUsd,
+    byCoin,
+  };
 }
 
 export async function getSpotUsdtSnapshot() {
   const result = await signedRequest("GET", "/v5/account/wallet-balance", {
     accountType: ACCOUNT_TYPE,
-    coin: "USDT",
   });
   const row = result?.list?.[0];
+  const funding = await getFundingSnapshot();
   if (!row) {
-    return { equityUsdt: 0, availableUsdt: 0, coins: [], funding: await getFundingUsdtSnapshot() };
+    return {
+      equityUsdt: 0,
+      availableUsdt: 0,
+      availableUsd: 0,
+      coins: [],
+      funding,
+    };
   }
 
   const coins = Array.isArray(row.coin) ? row.coin : [];
-  const usdt = coins.find(c => c.coin === "USDT") || {};
-  const coinEquity = Number(usdt.equity || usdt.walletBalance || 0);
-  const equityUsdt = Number(row.totalEquity || row.totalWalletBalance || coinEquity);
-  const availableUsdt = Number(
-    row.totalAvailableBalance ||
-    usdt.equity ||
-    usdt.walletBalance ||
-    usdt.availableToWithdraw ||
-    0
-  );
-  const funding = await getFundingUsdtSnapshot();
+  const usdt = pickCoinRow(coins, "USDT");
+  const usd = pickCoinRow(coins, "USD");
+  const usdtAvail = coinAvailable(usdt);
+  const usdAvail = coinAvailable(usd);
+  const equityUsdt = Number(row.totalEquity || row.totalWalletBalance || usdtAvail + usdAvail);
+  const availableUsdt = usdtAvail;
+  const availableUsd = usdAvail;
 
   return {
     equityUsdt: Number.isFinite(equityUsdt) ? equityUsdt : 0,
     availableUsdt: Number.isFinite(availableUsdt) ? availableUsdt : 0,
+    availableUsd: Number.isFinite(availableUsd) ? availableUsd : 0,
     coins,
     funding,
   };
@@ -253,7 +299,9 @@ export async function refreshStatus() {
     equityUsdt,
     availableUsdt: snapshot.availableUsdt,
     fundingUsdt: snapshot.funding?.walletUsdt || 0,
+    fundingUsd: snapshot.funding?.walletUsd || 0,
     fundingTransferUsdt: snapshot.funding?.transferUsdt || 0,
+    unifiedUsd: snapshot.availableUsd || 0,
     dayStartEquityUsdt: state.dayStartEquityUsdt,
     dayPnlUsdt,
     dayPnlPct,
@@ -355,17 +403,21 @@ export async function buildAgentContext() {
   }
   try {
     const status = await refreshStatus();
-    const snapshot = await getSpotUsdtSnapshot();
     const ticker = await getSpotTicker(status.symbol);
     return [
       "Дані Bybit SPOT (джерело правди, не вигадуй):",
       `- Режим: ${status.testnet ? "TESTNET" : "MAINNET"}`,
       `- Символ за замовчуванням: ${status.symbol}`,
       `- Ціна: ${ticker.lastPrice}`,
-      `- Unified equity USDT: ${status.equityUsdt}`,
-      `- Unified доступно USDT: ${status.availableUsdt}`,
-      snapshot.funding?.walletUsdt > 0 ? `- Funding USDT: ${snapshot.funding.walletUsdt}` : "",
-      status.availableUsdt <= 0 && snapshot.funding?.transferUsdt > 0
+      `- Unified equity: ${status.equityUsdt}`,
+      `- Unified USDT: ${status.availableUsdt}`,
+      status.unifiedUsd > 0 ? `- Unified USD: ${status.unifiedUsd}` : "",
+      status.fundingUsdt > 0 ? `- Funding USDT: ${status.fundingUsdt}` : "",
+      status.fundingUsd > 0 ? `- Funding USD: ${status.fundingUsd}` : "",
+      status.availableUsdt <= 0 && status.unifiedUsd > 0
+        ? "- Convert USD→USDT для угод BTCUSDT"
+        : "",
+      status.availableUsdt <= 0 && status.fundingTransferUsdt > 0
         ? "- Потрібен Transfer: Funding → Unified Trading"
         : "",
       `- PnL за день: ${status.dayPnlUsdt.toFixed(2)} USDT (${status.dayPnlPct.toFixed(2)}%)`,
@@ -396,16 +448,25 @@ export async function getStatusText() {
   } catch (err) {
     throw new Error(err?.message || "Bybit API request failed");
   }
-  const fundingHint = status.availableUsdt <= 0 && status.fundingTransferUsdt > 0
-    ? "⚠️ USDT на Funding — Transfer → Unified Trading"
-    : "";
+  const hints = [];
+  if (status.availableUsdt <= 0 && status.unifiedUsd > 0) {
+    hints.push("⚠️ Є USD на Unified — для spot потрібен USDT (Convert USD→USDT)");
+  }
+  if (status.availableUsdt <= 0 && status.fundingTransferUsdt > 0) {
+    hints.push("⚠️ Stablecoins на Funding — Transfer → Unified Trading");
+  }
+  if (status.fundingUsd > 0 && status.fundingUsdt <= 0) {
+    hints.push(`⚠️ Funding USD: ${status.fundingUsd.toFixed(2)} — переказ / конвертація в USDT`);
+  }
   return [
     `Bybit ${status.testnet ? "TESTNET" : "MAINNET"} (${ACCOUNT_TYPE}, spot trades)`,
     `Символ: ${status.symbol} | Ціна: ${ticker.lastPrice}`,
-    `Unified equity: ${status.equityUsdt.toFixed(2)} USDT`,
-    `Unified доступно: ${status.availableUsdt.toFixed(2)} USDT`,
+    `Unified equity: ${status.equityUsdt.toFixed(2)} (≈ USD/USDT)`,
+    `Unified USDT: ${status.availableUsdt.toFixed(2)}`,
+    status.unifiedUsd > 0 ? `Unified USD: ${status.unifiedUsd.toFixed(2)}` : "",
     status.fundingUsdt > 0 ? `Funding USDT: ${status.fundingUsdt.toFixed(2)}` : "",
-    fundingHint,
+    status.fundingUsd > 0 ? `Funding USD: ${status.fundingUsd.toFixed(2)}` : "",
+    ...hints,
     `PnL день: ${status.dayPnlPct.toFixed(2)}% (${status.dayPnlUsdt.toFixed(2)} USDT)`,
     `Торгівля: ${status.tradingStopped ? "ЗУПИНЕНО" : "АКТИВНА"}`,
     status.tradingStopped ? `Причина: ${status.stopReason}` : "",
