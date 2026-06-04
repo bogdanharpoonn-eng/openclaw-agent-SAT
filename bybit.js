@@ -39,6 +39,12 @@ export function isConfigured() {
   return Boolean(getApiKey() && getApiSecret());
 }
 
+/** Public Bybit ping — fails with CloudFront 403 if deploy region is blocked. */
+export async function probeBybitReachability() {
+  await publicGet("/v5/market/time");
+  return { ok: true, testnet: TESTNET };
+}
+
 async function parseBybitResponse(response, context) {
   const raw = await response.text();
   if (!raw || !raw.trim()) {

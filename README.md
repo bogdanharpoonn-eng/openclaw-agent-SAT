@@ -8,7 +8,16 @@ Telegram-бот + HTTP API для **Bybit SPOT** (testnet/mainnet): баланс
 
 `Dockerfile` — Node.js only. Healthcheck: `GET /health`.
 
-**Важливо — регіон деплою:** Bybit API (CloudFront) **блокує US West** і деякі інші регіони (HTTP 403 *block access from your country*). У Railway для сервісу вкажи **Region: EU West (Amsterdam)**, не US West. Після зміни регіону — **Redeploy**. Перевірка: `GET /bybit/status` має повертати баланс, не 403.
+**Важливо — регіон деплою:** Bybit API (CloudFront) **блокує US** (HTTP 403). У репозиторії є `railway.toml` → **EU West Metal (Amsterdam)**. Після push зроби **Redeploy**.
+
+Якщо 403 лишається — вручну в Railway:
+1. Сервіс → **Settings** → прокрути до **Scale** → **Regions**
+2. Видали **US West / US East** (якщо є кілька регіонів / replicas)
+3. Лиш **EU West Metal** (`europe-west4-drams3a`), **1 replica**
+4. **Account Settings** → Preferred region → **EU West**
+5. **Deploy → Redeploy**
+
+Перевірка: `GET /health` → `"bybitApi":"ok"` і `"railwayRegion"` з `europe`/`amsterdam`. `GET /bybit/status` — баланс без 403.
 
 **Testnet coins:** інколи нараховують **USD**, а не USDT. Бот торгує пари на кшталт `BTCUSDT` — потрібен **USDT** на Unified (Convert USD→USDT або новий Request Test Coins з USDT).
 

@@ -393,12 +393,23 @@ app.get("/", (_req, res) => {
   });
 });
 
-app.get("/health", (_req, res) => {
-  res.json({
+app.get("/health", async (_req, res) => {
+  const payload = {
     status: "ok",
     service: "openclaw-agent-SAT",
     bybit: bybit.isConfigured(),
-  });
+    railwayRegion: process.env.RAILWAY_REPLICA_REGION || process.env.RAILWAY_REGION || null,
+  };
+  if (bybit.isConfigured()) {
+    try {
+      await bybit.probeBybitReachability();
+      payload.bybitApi = "ok";
+    } catch (err) {
+      payload.bybitApi = "blocked";
+      payload.bybitApiHint = String(err?.message || err).slice(0, 200);
+    }
+  }
+  res.json(payload);
 });
 
 app.post("/fetch", async (req, res) => {

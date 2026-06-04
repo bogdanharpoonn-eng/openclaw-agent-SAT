@@ -1,0 +1,11 @@
+# Bybit API (CloudFront) blocks US regions. EU West is required.
+[build]
+builder = "DOCKERFILE"
+dockerfilePath = "Dockerfile"
+
+[deploy]
+healthcheckPath = "/health"
+restartPolicyType = "ON_FAILURE"
+
+[deploy.multiRegionConfig.europe-west4-drams3a]
+numReplicas = 1
