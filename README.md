@@ -14,6 +14,7 @@ Telegram-бот + HTTP API для **Bybit SPOT** (testnet/mainnet): баланс
 - `BASE_URL` — публічний URL (`https://<service>.up.railway.app`)
 - `BYBIT_API_KEY`, `BYBIT_API_SECRET`
 - `BYBIT_TESTNET=true` (рекомендовано на старті)
+- `BYBIT_ACCOUNT_TYPE=UNIFIED` (для testnet зазвичай UNIFIED, не SPOT)
 
 **Рекомендовано:**
 - `TELEGRAM_CHAT_ALLOWLIST` — твій `chat_id`

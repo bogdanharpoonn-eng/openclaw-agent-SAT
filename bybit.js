@@ -21,6 +21,7 @@ const AUTO_MONITOR = String(process.env.BYBIT_AUTO_MONITOR || "true").toLowerCas
 const AUTO_TRADE = String(process.env.BYBIT_AUTO_TRADE || "false").toLowerCase() === "true";
 const POLL_MS = Number(process.env.BYBIT_POLL_MS || 30000);
 const DEFAULT_SYMBOL = process.env.BYBIT_SYMBOL || "BTCUSDT";
+const ACCOUNT_TYPE = (process.env.BYBIT_ACCOUNT_TYPE || "UNIFIED").trim().toUpperCase();
 const TIMEZONE = process.env.BYBIT_TIMEZONE || "Europe/Kyiv";
 
 let monitorTimer = null;
@@ -139,7 +140,7 @@ async function publicGet(endpoint, query = {}) {
 
 export async function getSpotUsdtSnapshot() {
   const result = await signedRequest("GET", "/v5/account/wallet-balance", {
-    accountType: "SPOT",
+    accountType: ACCOUNT_TYPE,
   });
   const row = result?.list?.[0];
   if (!row) {
@@ -359,7 +360,7 @@ export async function getStatusText() {
     throw new Error(err?.message || "Bybit API request failed");
   }
   return [
-    `Bybit ${status.testnet ? "TESTNET" : "MAINNET"} (SPOT)`,
+    `Bybit ${status.testnet ? "TESTNET" : "MAINNET"} (${ACCOUNT_TYPE}, spot trades)`,
     `Символ: ${status.symbol} | Ціна: ${ticker.lastPrice}`,
     `Equity: ${status.equityUsdt.toFixed(2)} USDT`,
     `Доступно: ${status.availableUsdt.toFixed(2)} USDT`,
