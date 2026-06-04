@@ -18,17 +18,16 @@ npm start
 
 За замовчуванням сервер слухає порт **3000** (змінити: `PORT=8080`).
 
-## Railway (Docker) для Scrapling
+## Railway (Docker)
 
-Щоб `web_scraping_agent` реально працював у Railway, потрібні Python + Scrapling у runtime.  
-У цьому репозиторії є `Dockerfile` (Node + Python + Scrapling), тому рекомендується запуск саме через Docker deploy.
+`Dockerfile` — легкий образ **Node.js only** (швидший деплой). Healthcheck: `GET /health`.
 
 Мінімум змінних у Railway:
 - `OPENAI_API_KEY`
 - `TELEGRAM_BOT_TOKEN`
-- `BASE_URL`
-- `SCRAPLING_BIN=/usr/local/bin/scrapling`
-- `SCRAPLING_NO_VERIFY=true` (за потреби, якщо є SSL-проблеми)
+- `BASE_URL` (публічний URL сервісу, напр. `https://<service>.up.railway.app`)
+- `TELEGRAM_CHAT_ALLOWLIST` (рекомендовано)
+- `BYBIT_API_KEY`, `BYBIT_API_SECRET`, `BYBIT_TESTNET=true` (якщо потрібен Bybit)
 
 ## Змінні середовища
 
@@ -108,6 +107,25 @@ npm start
 
 - `chat_id` (обов’язково)
 - `text` (обов’язково)
+
+### Bybit SPOT (`BYBIT_Agent`)
+
+Потрібні ключі API (спочатку **testnet**): `BYBIT_API_KEY`, `BYBIT_API_SECRET`, `BYBIT_TESTNET=true`.
+
+| Змінна | За замовчуванням | Опис |
+|--------|------------------|------|
+| `BYBIT_DAILY_LOSS_LIMIT_PCT` | `10` | Стоп нових угод, якщо денний PnL ≤ -10% |
+| `BYBIT_MAX_TRADE_PCT` | `30` | Макс. сума однієї угоди від доступного USDT |
+| `BYBIT_RESERVE_PCT` | `10` | Резерв USDT, який не використовується |
+| `BYBIT_AUTO_MONITOR` | `true` | Фоновий моніторинг лімітів |
+| `BYBIT_AUTO_TRADE` | `false` | Авто-угоди (стратегія окремо; за замовчуванням вимкнено) |
+| `BYBIT_ALERT_CHAT_ID` | — | Telegram chat_id для алертів STOP |
+
+**Endpoints:** `GET /bybit/status`, `POST /bybit/stop`, `POST /bybit/resume`, `POST /bybit/order`  
+**Тіло order (buy):** `{ "side": "buy", "symbol": "BTCUSDT", "spend_usdt": 50 }`  
+**Тіло order (sell):** `{ "side": "sell", "symbol": "BTCUSDT", "qty": 0.001 }`
+
+**Telegram:** `bybit status`, `стоп bybit`, `bybit resume`
 
 ### `GET /health/scrapling`
 

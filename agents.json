@@ -27,5 +27,27 @@
     ],
     "prompt_file": "web_news_agent.txt",
     "use_schema": false
+  },
+  "BYBIT_Agent": {
+    "display_name": "BYBIT_Agent",
+    "description": "SPOT Bybit: баланс, PnL, risk-limits, авто-стоп при -10% за день, макс. угода 30%.",
+    "keywords": [
+      "bybit",
+      "байбіт",
+      "біткоін",
+      "btc",
+      "eth",
+      "spot",
+      "крипто",
+      "баланс",
+      "pnl",
+      "ордер",
+      "угода",
+      "купити",
+      "продати",
+      "usdt"
+    ],
+    "prompt_file": "bybit_agent.txt",
+    "use_schema": false
   }
 }

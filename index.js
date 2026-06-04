@@ -7,6 +7,7 @@ import os from "os";
 import { execFile } from "child_process";
 import { promisify } from "util";
 import iconv from "iconv-lite";
+import * as bybit from "./bybit.js";
 
 const app = express();
 app.use(express.json({ limit: "5mb" }));
@@ -407,6 +408,14 @@ ${agentsHints}
   return availableAgents.includes(candidate) ? candidate : "general_assistant";
 }
 
+app.get("/health", (_req, res) => {
+  res.json({
+    status: "ok",
+    service: "openclaw-agent-SAT",
+    bybit: bybit.isConfigured(),
+  });
+});
+
 app.post("/fetch", async (req, res) => {
   try {
     const url = req.body?.url;
@@ -530,6 +539,33 @@ app.post("/telegram/webhook", async (req, res) => {
       return res.json({ status: "ignored", reason: "No text or voice message" });
     }
 
+    const lowText = text.toLowerCase();
+    if (/^(стоп|stop)\s*bybit$/i.test(text) || lowText === "стоп bybit") {
+      if (bybit.isConfigured()) {
+        await bybit.setKillSwitch(true, "Telegram STOP");
+        await sendTelegramMessage(chatId, "Bybit: торгівлю зупинено (kill-switch).");
+      } else {
+        await sendTelegramMessage(chatId, "Bybit API не налаштовано.");
+      }
+      return res.json({ status: "ok", action: "bybit_stop" });
+    }
+    if (/^bybit\s+(status|статус)$/i.test(text) || lowText === "/bybit") {
+      const statusText = bybit.isConfigured()
+        ? await bybit.getStatusText()
+        : "Bybit API не налаштовано. Додай BYBIT_API_KEY та BYBIT_API_SECRET (testnet).";
+      await sendTelegramMessage(chatId, statusText);
+      return res.json({ status: "ok", action: "bybit_status" });
+    }
+    if (/^bybit\s+resume$/i.test(text)) {
+      if (bybit.isConfigured()) {
+        await bybit.resumeTrading();
+        await sendTelegramMessage(chatId, "Bybit: торгівлю відновлено (якщо денний ліміт не перевищено).");
+      } else {
+        await sendTelegramMessage(chatId, "Bybit API не налаштовано.");
+      }
+      return res.json({ status: "ok", action: "bybit_resume" });
+    }
+
     const urls = [...new Set([
       ...extractUrlsFromText(text),
       ...getPresetUrlsForQuery(text),
@@ -559,6 +595,66 @@ app.post("/telegram/webhook", async (req, res) => {
       message: error.message || "Webhook processing failed",
     });
     return res.status(500).json({ status: "error", message: error.message || "Webhook processing failed" });
+  }
+});
+
+app.get("/bybit/status", async (_req, res) => {
+  try {
+    if (!bybit.isConfigured()) {
+      return res.status(503).json({ status: "error", message: "Bybit API not configured" });
+    }
+    const status = await bybit.refreshStatus();
+    const ticker = await bybit.getSpotTicker(status.symbol);
+    return res.json({ status: "ok", config: bybit.getPublicConfig(), ticker, account: status });
+  } catch (error) {
+    return res.status(500).json({ status: "error", message: error.message || "Bybit status failed" });
+  }
+});
+
+app.post("/bybit/stop", async (_req, res) => {
+  try {
+    if (!bybit.isConfigured()) {
+      return res.status(503).json({ status: "error", message: "Bybit API not configured" });
+    }
+    const account = await bybit.setKillSwitch(true, "API STOP");
+    return res.json({ status: "ok", account });
+  } catch (error) {
+    return res.status(500).json({ status: "error", message: error.message || "Bybit stop failed" });
+  }
+});
+
+app.post("/bybit/resume", async (_req, res) => {
+  try {
+    if (!bybit.isConfigured()) {
+      return res.status(503).json({ status: "error", message: "Bybit API not configured" });
+    }
+    const account = await bybit.resumeTrading();
+    return res.json({ status: "ok", account });
+  } catch (error) {
+    return res.status(500).json({ status: "error", message: error.message || "Bybit resume failed" });
+  }
+});
+
+app.post("/bybit/order", async (req, res) => {
+  try {
+    if (!bybit.isConfigured()) {
+      return res.status(503).json({ status: "error", message: "Bybit API not configured" });
+    }
+    const side = String(req.body?.side || "").toLowerCase();
+    const symbol = typeof req.body?.symbol === "string" ? req.body.symbol.trim() : undefined;
+    if (side === "buy") {
+      const spendUsdt = Number(req.body?.spend_usdt);
+      const result = await bybit.placeSpotMarketBuy({ symbol, spendUsdt });
+      return res.status(result.ok ? 200 : 400).json(result);
+    }
+    if (side === "sell") {
+      const qty = Number(req.body?.qty);
+      const result = await bybit.placeSpotMarketSell({ symbol, qty });
+      return res.status(result.ok ? 200 : 400).json(result);
+    }
+    return res.status(400).json({ status: "error", message: "Field 'side' must be 'buy' or 'sell'." });
+  } catch (error) {
+    return res.status(500).json({ status: "error", message: error.message || "Bybit order failed" });
   }
 });
 
@@ -640,8 +736,14 @@ app.post("/agent", async (req, res) => {
       scrapeContext = chunks.join("\n\n---\n\n");
     }
 
+    let bybitContext = "";
+    if (agentId === "BYBIT_Agent" && bybit.isConfigured()) {
+      bybitContext = await bybit.buildAgentContext();
+    }
+
     const finalUserMessage = [
       prompt,
+      bybitContext ? `${bybitContext}` : "",
       webContext ? `Веб-контекст (використай лише якщо релевантно):\n${webContext}` : "",
       scrapeContext ? `Результат Scrapling:\n${scrapeContext}` : "",
     ].filter(Boolean).join("\n\n");
@@ -678,4 +780,20 @@ app.get("/capabilities", async (_req, res) => {
   }
 });
 
-app.listen(PORT, () => console.log(`Engine started on port ${PORT}`));
+app.listen(PORT, () => {
+  console.log(`Engine started on port ${PORT}`);
+  if (bybit.isConfigured()) {
+    const alertChatId = process.env.BYBIT_ALERT_CHAT_ID || TELEGRAM_CHAT_ALLOWLIST[0];
+    bybit.startAutoMonitor(async (message) => {
+      console.log("BYBIT_ALERT:", message);
+      if (alertChatId && TELEGRAM_BOT_TOKEN) {
+        try {
+          await sendTelegramMessage(alertChatId, message);
+        } catch (err) {
+          console.error("Bybit alert Telegram failed:", err.message);
+        }
+      }
+    });
+    console.log(`Bybit monitor started (${bybit.getPublicConfig().testnet ? "testnet" : "mainnet"})`);
+  }
+});

@@ -1,0 +1,360 @@
+import crypto from "crypto";
+import fs from "fs/promises";
+import path from "path";
+
+const TESTNET = String(process.env.BYBIT_TESTNET || "true").toLowerCase() === "true";
+const BASE_URL = TESTNET ? "https://api-testnet.bybit.com" : "https://api.bybit.com";
+const STATE_FILE = process.env.BYBIT_STATE_FILE || path.join(process.cwd(), "data", "bybit-state.json");
+const DAILY_LOSS_LIMIT_PCT = Number(process.env.BYBIT_DAILY_LOSS_LIMIT_PCT || 10);
+const MAX_TRADE_PCT = Number(process.env.BYBIT_MAX_TRADE_PCT || 30);
+const RESERVE_PCT = Number(process.env.BYBIT_RESERVE_PCT || 10);
+const AUTO_MONITOR = String(process.env.BYBIT_AUTO_MONITOR || "true").toLowerCase() === "true";
+const AUTO_TRADE = String(process.env.BYBIT_AUTO_TRADE || "false").toLowerCase() === "true";
+const POLL_MS = Number(process.env.BYBIT_POLL_MS || 30000);
+const DEFAULT_SYMBOL = process.env.BYBIT_SYMBOL || "BTCUSDT";
+const TIMEZONE = process.env.BYBIT_TIMEZONE || "Europe/Kyiv";
+
+let monitorTimer = null;
+let onMonitorAlert = null;
+
+export function isConfigured() {
+  return Boolean(process.env.BYBIT_API_KEY && process.env.BYBIT_API_SECRET);
+}
+
+function getDayKey() {
+  return new Intl.DateTimeFormat("en-CA", { timeZone: TIMEZONE }).format(new Date());
+}
+
+async function loadState() {
+  try {
+    const raw = await fs.readFile(STATE_FILE, "utf-8");
+    return JSON.parse(raw);
+  } catch {
+    return {
+      dayKey: "",
+      dayStartEquityUsdt: 0,
+      tradingStopped: false,
+      stopReason: "",
+      lastEquityUsdt: 0,
+      manualKill: false,
+    };
+  }
+}
+
+async function saveState(state) {
+  await fs.mkdir(path.dirname(STATE_FILE), { recursive: true });
+  await fs.writeFile(STATE_FILE, JSON.stringify(state, null, 2), "utf-8");
+}
+
+async function signedRequest(method, endpoint, query = {}, body = null) {
+  const apiKey = process.env.BYBIT_API_KEY;
+  const apiSecret = process.env.BYBIT_API_SECRET;
+  if (!apiKey || !apiSecret) {
+    throw new Error("BYBIT_API_KEY / BYBIT_API_SECRET not configured");
+  }
+
+  const timestamp = Date.now().toString();
+  const recvWindow = "5000";
+  let url = `${BASE_URL}${endpoint}`;
+  let signPayload = "";
+
+  if (method === "GET") {
+    const qs = new URLSearchParams(query).toString();
+    signPayload = timestamp + apiKey + recvWindow + qs;
+    if (qs) url += `?${qs}`;
+  } else {
+    const bodyStr = JSON.stringify(body);
+    signPayload = timestamp + apiKey + recvWindow + bodyStr;
+  }
+
+  const sign = crypto.createHmac("sha256", apiSecret).update(signPayload).digest("hex");
+  const headers = {
+    "X-BAPI-API-KEY": apiKey,
+    "X-BAPI-SIGN": sign,
+    "X-BAPI-TIMESTAMP": timestamp,
+    "X-BAPI-RECV-WINDOW": recvWindow,
+    "Content-Type": "application/json",
+  };
+
+  const response = await fetch(url, {
+    method,
+    headers,
+    body: method === "GET" ? undefined : JSON.stringify(body),
+  });
+  const data = await response.json();
+  if (data.retCode !== 0) {
+    throw new Error(data.retMsg || `Bybit API error ${data.retCode}`);
+  }
+  return data.result;
+}
+
+async function publicGet(endpoint, query = {}) {
+  const qs = new URLSearchParams(query).toString();
+  const url = `${BASE_URL}${endpoint}${qs ? `?${qs}` : ""}`;
+  const response = await fetch(url);
+  const data = await response.json();
+  if (data.retCode !== 0) {
+    throw new Error(data.retMsg || `Bybit public API error ${data.retCode}`);
+  }
+  return data.result;
+}
+
+export async function getSpotUsdtSnapshot() {
+  const result = await signedRequest("GET", "/v5/account/wallet-balance", {
+    accountType: "SPOT",
+  });
+  const row = result?.list?.[0];
+  if (!row) {
+    return { equityUsdt: 0, availableUsdt: 0, coins: [] };
+  }
+
+  const coins = Array.isArray(row.coin) ? row.coin : [];
+  const usdt = coins.find(c => c.coin === "USDT") || {};
+  const availableUsdt = Number(usdt.availableToWithdraw || usdt.walletBalance || 0);
+  const equityUsdt = Number(row.totalEquityUsd || row.totalWalletBalance || availableUsdt);
+
+  return {
+    equityUsdt: Number.isFinite(equityUsdt) ? equityUsdt : availableUsdt,
+    availableUsdt: Number.isFinite(availableUsdt) ? availableUsdt : 0,
+    coins,
+  };
+}
+
+export async function getSpotTicker(symbol = DEFAULT_SYMBOL) {
+  const result = await publicGet("/v5/market/tickers", { category: "spot", symbol });
+  const row = result?.list?.[0];
+  return {
+    symbol,
+    lastPrice: Number(row?.lastPrice || 0),
+    bid: Number(row?.bid1Price || 0),
+    ask: Number(row?.ask1Price || 0),
+  };
+}
+
+function computeLimits(availableUsdt) {
+  const reserveUsdt = availableUsdt * (RESERVE_PCT / 100);
+  const tradableUsdt = Math.max(0, availableUsdt - reserveUsdt);
+  const maxSpendUsdt = tradableUsdt * (MAX_TRADE_PCT / 100);
+  return { reserveUsdt, tradableUsdt, maxSpendUsdt };
+}
+
+export async function refreshStatus() {
+  const snapshot = await getSpotUsdtSnapshot();
+  const state = await loadState();
+  const dayKey = getDayKey();
+  const equityUsdt = snapshot.equityUsdt;
+
+  if (state.dayKey !== dayKey) {
+    state.dayKey = dayKey;
+    state.dayStartEquityUsdt = equityUsdt;
+    if (!state.manualKill) {
+      state.tradingStopped = false;
+      state.stopReason = "";
+    }
+  }
+
+  if (!state.dayStartEquityUsdt || state.dayStartEquityUsdt <= 0) {
+    state.dayStartEquityUsdt = equityUsdt;
+  }
+
+  state.lastEquityUsdt = equityUsdt;
+
+  const dayPnlUsdt = equityUsdt - state.dayStartEquityUsdt;
+  const dayPnlPct = state.dayStartEquityUsdt > 0
+    ? (dayPnlUsdt / state.dayStartEquityUsdt) * 100
+    : 0;
+
+  if (!state.tradingStopped && dayPnlPct <= -DAILY_LOSS_LIMIT_PCT) {
+    state.tradingStopped = true;
+    state.stopReason = `Денний ліміт збитку ${DAILY_LOSS_LIMIT_PCT}% досягнуто (${dayPnlPct.toFixed(2)}%)`;
+  }
+
+  await saveState(state);
+
+  const limits = computeLimits(snapshot.availableUsdt);
+
+  return {
+    testnet: TESTNET,
+    symbol: DEFAULT_SYMBOL,
+    equityUsdt,
+    availableUsdt: snapshot.availableUsdt,
+    dayStartEquityUsdt: state.dayStartEquityUsdt,
+    dayPnlUsdt,
+    dayPnlPct,
+    tradingStopped: state.tradingStopped || state.manualKill,
+    stopReason: state.manualKill ? (state.stopReason || "Manual STOP") : state.stopReason,
+    manualKill: state.manualKill,
+    autoTradeEnabled: AUTO_TRADE,
+    limits: {
+      dailyLossLimitPct: DAILY_LOSS_LIMIT_PCT,
+      maxTradePct: MAX_TRADE_PCT,
+      reservePct: RESERVE_PCT,
+      ...limits,
+    },
+  };
+}
+
+export async function setKillSwitch(stop, reason = "Manual STOP") {
+  const state = await loadState();
+  state.manualKill = Boolean(stop);
+  state.tradingStopped = Boolean(stop);
+  state.stopReason = stop ? reason : "";
+  await saveState(state);
+  return refreshStatus();
+}
+
+export async function resumeTrading() {
+  const state = await loadState();
+  state.manualKill = false;
+  state.tradingStopped = false;
+  state.stopReason = "";
+  await saveState(state);
+  return refreshStatus();
+}
+
+export function validateSpendUsdt(status, spendUsdt) {
+  if (!Number.isFinite(spendUsdt) || spendUsdt <= 0) {
+    return { ok: false, reason: "Сума угоди має бути > 0 USDT" };
+  }
+  if (status.tradingStopped) {
+    return { ok: false, reason: status.stopReason || "Торгівлю зупинено" };
+  }
+  if (spendUsdt > status.limits.maxSpendUsdt) {
+    return {
+      ok: false,
+      reason: `Перевищено ліміт ${MAX_TRADE_PCT}% на угоду: max ${status.limits.maxSpendUsdt.toFixed(2)} USDT`,
+    };
+  }
+  if (spendUsdt > status.availableUsdt) {
+    return { ok: false, reason: "Недостатньо вільного USDT на SPOT" };
+  }
+  return { ok: true };
+}
+
+export async function placeSpotMarketBuy({ symbol = DEFAULT_SYMBOL, spendUsdt }) {
+  const status = await refreshStatus();
+  const check = validateSpendUsdt(status, spendUsdt);
+  if (!check.ok) {
+    return { ok: false, reason: check.reason, status };
+  }
+
+  const qty = spendUsdt.toFixed(2);
+  const result = await signedRequest("POST", "/v5/order/create", {}, {
+    category: "spot",
+    symbol,
+    side: "Buy",
+    orderType: "Market",
+    qty,
+    marketUnit: "quoteCoin",
+  });
+
+  return { ok: true, order: result, status: await refreshStatus() };
+}
+
+export async function placeSpotMarketSell({ symbol = DEFAULT_SYMBOL, qty }) {
+  const status = await refreshStatus();
+  if (status.tradingStopped) {
+    return { ok: false, reason: status.stopReason || "Торгівлю зупинено", status };
+  }
+  if (!Number.isFinite(qty) || qty <= 0) {
+    return { ok: false, reason: "qty має бути > 0", status };
+  }
+
+  const result = await signedRequest("POST", "/v5/order/create", {}, {
+    category: "spot",
+    symbol,
+    side: "Sell",
+    orderType: "Market",
+    qty: String(qty),
+  });
+
+  return { ok: true, order: result, status: await refreshStatus() };
+}
+
+export async function buildAgentContext() {
+  if (!isConfigured()) {
+    return "Bybit API не налаштовано (немає BYBIT_API_KEY/SECRET).";
+  }
+  try {
+    const status = await refreshStatus();
+    const ticker = await getSpotTicker(status.symbol);
+    return [
+      "Дані Bybit SPOT (джерело правди, не вигадуй):",
+      `- Режим: ${status.testnet ? "TESTNET" : "MAINNET"}`,
+      `- Символ за замовчуванням: ${status.symbol}`,
+      `- Ціна: ${ticker.lastPrice}`,
+      `- Equity USDT: ${status.equityUsdt}`,
+      `- Доступно USDT: ${status.availableUsdt}`,
+      `- PnL за день: ${status.dayPnlUsdt.toFixed(2)} USDT (${status.dayPnlPct.toFixed(2)}%)`,
+      `- Торгівля дозволена: ${status.tradingStopped ? "НІ" : "ТАК"}`,
+      status.tradingStopped ? `- Причина стопу: ${status.stopReason}` : "",
+      `- Макс. сума угоди зараз: ${status.limits.maxSpendUsdt.toFixed(2)} USDT`,
+      `- Денний ліміт збитку: ${DAILY_LOSS_LIMIT_PCT}%`,
+      `- Резерв: ${RESERVE_PCT}%`,
+      "- Тільки SPOT, без маржі та без плеча.",
+      "- Не пропонуй угоди, що перевищують max spend або доступний баланс.",
+    ].filter(Boolean).join("\n");
+  } catch (err) {
+    return `Bybit помилка контексту: ${err.message}`;
+  }
+}
+
+export async function getStatusText() {
+  const status = await refreshStatus();
+  const ticker = await getSpotTicker(status.symbol);
+  return [
+    `Bybit ${status.testnet ? "TESTNET" : "MAINNET"} (SPOT)`,
+    `Символ: ${status.symbol} | Ціна: ${ticker.lastPrice}`,
+    `Equity: ${status.equityUsdt.toFixed(2)} USDT`,
+    `Доступно: ${status.availableUsdt.toFixed(2)} USDT`,
+    `PnL день: ${status.dayPnlPct.toFixed(2)}% (${status.dayPnlUsdt.toFixed(2)} USDT)`,
+    `Торгівля: ${status.tradingStopped ? "ЗУПИНЕНО" : "АКТИВНА"}`,
+    status.tradingStopped ? `Причина: ${status.stopReason}` : "",
+    `Макс. угода: ${status.limits.maxSpendUsdt.toFixed(2)} USDT (${MAX_TRADE_PCT}%)`,
+    `Денний стоп: -${DAILY_LOSS_LIMIT_PCT}%`,
+    `Авто-угоди: ${AUTO_TRADE ? "увімкнено" : "вимкнено (лише моніторинг)"}`,
+  ].filter(Boolean).join("\n");
+}
+
+async function monitorTick() {
+  if (!isConfigured()) return;
+  try {
+    const prev = await loadState();
+    const status = await refreshStatus();
+    if (status.tradingStopped && !prev.tradingStopped && onMonitorAlert) {
+      await onMonitorAlert(`⚠️ Bybit STOP: ${status.stopReason}`);
+    }
+    // Авто-угоди вимкнені за замовчуванням — стратегія підключається окремо.
+    if (AUTO_TRADE && !status.tradingStopped) {
+      // Placeholder: стратегія ще не підключена.
+    }
+  } catch (err) {
+    console.error("Bybit monitor error:", err.message);
+  }
+}
+
+export function startAutoMonitor(alertCallback) {
+  if (!AUTO_MONITOR || !isConfigured()) return;
+  onMonitorAlert = alertCallback || null;
+  if (monitorTimer) clearInterval(monitorTimer);
+  monitorTimer = setInterval(monitorTick, POLL_MS);
+  monitorTick();
+}
+
+export function stopAutoMonitor() {
+  if (monitorTimer) clearInterval(monitorTimer);
+  monitorTimer = null;
+}
+
+export function getPublicConfig() {
+  return {
+    testnet: TESTNET,
+    dailyLossLimitPct: DAILY_LOSS_LIMIT_PCT,
+    maxTradePct: MAX_TRADE_PCT,
+    reservePct: RESERVE_PCT,
+    autoMonitor: AUTO_MONITOR,
+    autoTrade: AUTO_TRADE,
+    symbol: DEFAULT_SYMBOL,
+    configured: isConfigured(),
+  };
+}
