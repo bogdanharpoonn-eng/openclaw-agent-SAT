@@ -1,6 +1,15 @@
 import crypto from "crypto";
 import fs from "fs/promises";
 import path from "path";
+import {
+  ensureStrategyState,
+  evaluateStrategy,
+  getCoinAvailable,
+  getStrategyConfig,
+  parseSymbolPair,
+  recordBuy,
+  recordSell,
+} from "./bybit-strategy.js";
 
 const TESTNET = String(process.env.BYBIT_TESTNET || "true").toLowerCase() === "true";
 const BASE_URL = TESTNET ? "https://api-testnet.bybit.com" : "https://api.bybit.com";
@@ -37,6 +46,12 @@ async function loadState() {
       stopReason: "",
       lastEquityUsdt: 0,
       manualKill: false,
+      strategy: {
+        peakPrice: 0,
+        position: null,
+        lastTradeAt: 0,
+        lastAction: "",
+      },
     };
   }
 }
@@ -120,6 +135,10 @@ export async function getSpotUsdtSnapshot() {
   };
 }
 
+export async function getSpotSnapshot() {
+  return getSpotUsdtSnapshot();
+}
+
 export async function getSpotTicker(symbol = DEFAULT_SYMBOL) {
   const result = await publicGet("/v5/market/tickers", { category: "spot", symbol });
   const row = result?.list?.[0];
@@ -141,6 +160,7 @@ function computeLimits(availableUsdt) {
 export async function refreshStatus() {
   const snapshot = await getSpotUsdtSnapshot();
   const state = await loadState();
+  ensureStrategyState(state);
   const dayKey = getDayKey();
   const equityUsdt = snapshot.equityUsdt;
 
@@ -185,6 +205,8 @@ export async function refreshStatus() {
     stopReason: state.manualKill ? (state.stopReason || "Manual STOP") : state.stopReason,
     manualKill: state.manualKill,
     autoTradeEnabled: AUTO_TRADE,
+    strategy: state.strategy,
+    strategyConfig: getStrategyConfig(),
     limits: {
       dailyLossLimitPct: DAILY_LOSS_LIMIT_PCT,
       maxTradePct: MAX_TRADE_PCT,
@@ -291,6 +313,11 @@ export async function buildAgentContext() {
       `- Макс. сума угоди зараз: ${status.limits.maxSpendUsdt.toFixed(2)} USDT`,
       `- Денний ліміт збитку: ${DAILY_LOSS_LIMIT_PCT}%`,
       `- Резерв: ${RESERVE_PCT}%`,
+      `- Авто-стратегія: ${AUTO_TRADE ? "увімкнена" : "вимкнена"}`,
+      status.strategy?.position
+        ? `- Позиція: entry ${status.strategy.position.entryPrice}, qty ${status.strategy.position.qty}`
+        : "- Позиція: немає",
+      status.strategy?.lastAction ? `- Остання дія: ${status.strategy.lastAction}` : "",
       "- Тільки SPOT, без маржі та без плеча.",
       "- Не пропонуй угоди, що перевищують max spend або доступний баланс.",
     ].filter(Boolean).join("\n");
@@ -312,8 +339,61 @@ export async function getStatusText() {
     status.tradingStopped ? `Причина: ${status.stopReason}` : "",
     `Макс. угода: ${status.limits.maxSpendUsdt.toFixed(2)} USDT (${MAX_TRADE_PCT}%)`,
     `Денний стоп: -${DAILY_LOSS_LIMIT_PCT}%`,
-    `Авто-угоди: ${AUTO_TRADE ? "увімкнено" : "вимкнено (лише моніторинг)"}`,
+    `Авто-угоди: ${AUTO_TRADE ? "увімкнено" : "вимкнено"}`,
+    `Стратегія: dip -${getStrategyConfig().buyDipPct}% | TP +${getStrategyConfig().takeProfitPct}% | SL -${getStrategyConfig().stopLossPct}%`,
+    status.strategy?.position
+      ? `Позиція: ${status.strategy.position.qty} @ ${status.strategy.position.entryPrice}`
+      : "Позиція: —",
+    status.strategy?.lastAction ? `Останнє: ${status.strategy.lastAction}` : "",
   ].filter(Boolean).join("\n");
+}
+
+async function runAutoStrategy(status) {
+  const state = await loadState();
+  const strategy = ensureStrategyState(state);
+  const ticker = await getSpotTicker(status.symbol);
+  const snapshot = await getSpotUsdtSnapshot();
+  const price = ticker.lastPrice;
+
+  if (!price || price <= 0) return null;
+
+  const decision = evaluateStrategy({
+    price,
+    status,
+    strategy,
+    coins: snapshot.coins,
+    symbol: status.symbol,
+  });
+
+  let alertText = null;
+
+  if (decision.action === "buy" && decision.spendUsdt) {
+    const result = await placeSpotMarketBuy({ symbol: status.symbol, spendUsdt: decision.spendUsdt });
+    if (result.ok) {
+      const after = await getSpotUsdtSnapshot();
+      const { base } = parseSymbolPair(status.symbol);
+      const qty = getCoinAvailable(after.coins, base);
+      recordBuy(strategy, { price, qty, symbol: status.symbol });
+      await saveState(state);
+      alertText = `✅ BUY ${status.symbol}\n${decision.reason}\nСума: ${decision.spendUsdt} USDT\nQty≈${qty}`;
+    } else {
+      alertText = `⛔ BUY відхилено: ${result.reason}`;
+    }
+  } else if (decision.action === "sell" && decision.sellQty) {
+    const sellQty = Number(decision.sellQty.toFixed(6));
+    const result = await placeSpotMarketSell({ symbol: status.symbol, qty: sellQty });
+    if (result.ok) {
+      recordSell(strategy, price);
+      await saveState(state);
+      alertText = `✅ SELL ${status.symbol}\n${decision.reason}\nQty: ${sellQty}`;
+    } else {
+      alertText = `⛔ SELL відхилено: ${result.reason}`;
+    }
+  } else if (decision.action === "hold") {
+    await saveState(state);
+  }
+
+  return alertText;
 }
 
 async function monitorTick() {
@@ -324,9 +404,15 @@ async function monitorTick() {
     if (status.tradingStopped && !prev.tradingStopped && onMonitorAlert) {
       await onMonitorAlert(`⚠️ Bybit STOP: ${status.stopReason}`);
     }
-    // Авто-угоди вимкнені за замовчуванням — стратегія підключається окремо.
     if (AUTO_TRADE && !status.tradingStopped) {
-      // Placeholder: стратегія ще не підключена.
+      const tradeAlert = await runAutoStrategy(status);
+      if (tradeAlert && onMonitorAlert) {
+        await onMonitorAlert(tradeAlert);
+      }
+    } else {
+      const state = await loadState();
+      ensureStrategyState(state);
+      await saveState(state);
     }
   } catch (err) {
     console.error("Bybit monitor error:", err.message);
@@ -356,5 +442,6 @@ export function getPublicConfig() {
     autoTrade: AUTO_TRADE,
     symbol: DEFAULT_SYMBOL,
     configured: isConfigured(),
+    strategy: getStrategyConfig(),
   };
 }

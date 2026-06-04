@@ -24,7 +24,16 @@ Telegram-бот + HTTP API для **Bybit SPOT** (testnet/mainnet): баланс
 - `BYBIT_MAX_TRADE_PCT=30`
 - `BYBIT_RESERVE_PCT=10`
 - `BYBIT_AUTO_MONITOR=true`
-- `BYBIT_AUTO_TRADE=false`
+- `BYBIT_AUTO_TRADE=false` — увімкни `true` для авто-угод на testnet
+
+**Стратегія (за замовчуванням):**
+- `BYBIT_BUY_DIP_PCT=1.5` — купівля при просадці від локального піку
+- `BYBIT_TAKE_PROFIT_PCT=2` — продаж у плюс
+- `BYBIT_STOP_LOSS_PCT=1.5` — продаж у мінус по позиції
+- `BYBIT_AUTO_TRADE_PCT=15` — розмір угоди (% від max spend, не більше 30% ліміту)
+- `BYBIT_MIN_TRADE_USDT=5`
+- `BYBIT_TRADE_COOLDOWN_MS=300000` — пауза між угодами (5 хв)
+- `BYBIT_POLL_MS=30000` — перевірка ринку
 
 ## Telegram
 

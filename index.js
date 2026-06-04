@@ -540,6 +540,13 @@ app.post("/telegram/webhook", async (req, res) => {
       }
       return res.json({ status: "ok", action: "bybit_resume" });
     }
+    if (/^bybit\s+auto\s+(on|увімк|увімкнути)$/i.test(text)) {
+      await sendTelegramMessage(
+        chatId,
+        "Авто-угоди керуються змінною BYBIT_AUTO_TRADE=true на сервері (Railway → Variables). Після зміни — Redeploy.",
+      );
+      return res.json({ status: "ok", action: "bybit_auto_hint" });
+    }
 
     const agentPayload = {
       message: text.trim(),
