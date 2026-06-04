@@ -1,5 +1,5 @@
 {
-  "name": "openclaw-agent",
+  "name": "bybit-telegram-agent",
   "version": "1.0.0",
   "main": "index.js",
   "type": "module",

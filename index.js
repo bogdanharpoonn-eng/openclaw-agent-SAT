@@ -42,16 +42,6 @@ async function getAgentsConfig() {
   return JSON.parse(data);
 }
 
-function buildCapabilitiesText(config) {
-  return Object.entries(config)
-    .map(([agentId, settings]) => {
-      const name = settings.display_name || agentId;
-      const description = settings.description || "Профільний субагент.";
-      return `- ${name} (${agentId}): ${description}`;
-    })
-    .join("\n");
-}
-
 function isAllowedUrl(rawUrl) {
   let parsed;
   try {
@@ -98,21 +88,6 @@ function extractUrlsFromText(text) {
     .map(u => u.trim().replace(/[.,!?;:]+$/, ""))
     .filter(Boolean);
   return [...new Set(normalized)];
-}
-
-function getPresetUrlsForQuery(text) {
-  if (typeof text !== "string") return [];
-  const lower = text.toLowerCase();
-
-  const isNbuCurrencyRequest =
-    (lower.includes("нацбанк") || lower.includes("нбу") || lower.includes("national bank")) &&
-    (lower.includes("курс") || lower.includes("валют"));
-
-  if (isNbuCurrencyRequest) {
-    return ["https://bank.gov.ua/NBUStatService/v1/statdirectory/exchange?json"];
-  }
-
-  return [];
 }
 
 function buildRuntimeContext() {
@@ -566,16 +541,9 @@ app.post("/telegram/webhook", async (req, res) => {
       return res.json({ status: "ok", action: "bybit_resume" });
     }
 
-    const urls = [...new Set([
-      ...extractUrlsFromText(text),
-      ...getPresetUrlsForQuery(text),
-    ])];
     const agentPayload = {
       message: text.trim(),
-      urls,
-      use_scrape: true,
-      scrape_mode: "get",
-      use_web: urls.length > 0,
+      use_web: false,
     };
 
     const agentRes = await fetch(`http://127.0.0.1:${PORT}/agent`, {
@@ -679,10 +647,7 @@ app.post("/agent", async (req, res) => {
       "utf-8"
     );
 
-    const agentSystemInstruction = agentId === "general_assistant"
-      ? `${systemInstruction}\n\nАктуальні профільні помічники (з конфігу):\n${buildCapabilitiesText(config)}`
-      : systemInstruction;
-    const dynamicSystemInstruction = `${agentSystemInstruction}\n\n${buildRuntimeContext()}`;
+    const dynamicSystemInstruction = `${systemInstruction}\n\n${buildRuntimeContext()}`;
 
     const requestUrls = Array.isArray(req.body?.urls) ? req.body.urls.filter(u => typeof u === "string" && u.trim()) : [];
     const extractedUrls = requestUrls.length === 0 ? extractUrlsFromText(prompt) : [];
@@ -737,7 +702,7 @@ app.post("/agent", async (req, res) => {
     }
 
     let bybitContext = "";
-    if (agentId === "BYBIT_Agent" && bybit.isConfigured()) {
+    if (bybit.isConfigured()) {
       bybitContext = await bybit.buildAgentContext();
     }
 

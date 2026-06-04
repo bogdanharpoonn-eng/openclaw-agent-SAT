@@ -1,52 +1,8 @@
 {
-  "general_assistant": {
-    "display_name": "General Assistant",
-    "description": "Єдиний активний агент-архітектор для всіх запитів.",
-    "keywords": [],
-    "prompt_file": "chat_assistant.txt",
-    "use_schema": false
-  },
-  "WEB_NEWS_Agent": {
-    "display_name": "WEB_NEWS_Agent",
-    "description": "Профільний субагент для веб-ресерчу та новинних дайджестів у стилі executive briefing.",
-    "keywords": [
-      "новини",
-      "дайджест",
-      "тренди",
-      "що нового",
-      "що важливо",
-      "ai news",
-      "research",
-      "огляд",
-      "що знати",
-      "оновлення",
-      "perplexity",
-      "briefing",
-      "шi",
-      "штучний інтелект"
-    ],
-    "prompt_file": "web_news_agent.txt",
-    "use_schema": false
-  },
   "BYBIT_Agent": {
     "display_name": "BYBIT_Agent",
-    "description": "SPOT Bybit: баланс, PnL, risk-limits, авто-стоп при -10% за день, макс. угода 30%.",
-    "keywords": [
-      "bybit",
-      "байбіт",
-      "біткоін",
-      "btc",
-      "eth",
-      "spot",
-      "крипто",
-      "баланс",
-      "pnl",
-      "ордер",
-      "угода",
-      "купити",
-      "продати",
-      "usdt"
-    ],
+    "description": "SPOT Bybit: баланс, PnL, risk-limits, авто-стоп -10%/день, макс. угода 30%.",
+    "keywords": [],
     "prompt_file": "bybit_agent.txt",
     "use_schema": false
   }
