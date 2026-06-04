@@ -480,6 +480,10 @@ app.post("/telegram/send", async (req, res) => {
   }
 });
 
+app.get("/telegram/webhook", (_req, res) => {
+  res.json({ status: "ok", message: "Telegram webhook ready (POST updates here)." });
+});
+
 app.post("/telegram/webhook", async (req, res) => {
   try {
     const message = req.body?.message;
