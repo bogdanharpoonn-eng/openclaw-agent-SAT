@@ -525,10 +525,16 @@ app.post("/telegram/webhook", async (req, res) => {
       return res.json({ status: "ok", action: "bybit_stop" });
     }
     if (/^bybit\s+(status|статус)$/i.test(text) || lowText === "/bybit") {
-      const statusText = bybit.isConfigured()
-        ? await bybit.getStatusText()
-        : "Bybit API не налаштовано. Додай BYBIT_API_KEY та BYBIT_API_SECRET (testnet).";
-      await sendTelegramMessage(chatId, statusText);
+      try {
+        const statusText = bybit.isConfigured()
+          ? await bybit.getStatusText()
+          : "Bybit API не налаштовано. Додай BYBIT_API_KEY та BYBIT_API_SECRET (testnet).";
+        await sendTelegramMessage(chatId, statusText);
+      } catch (err) {
+        const msg = err?.message || "Bybit status failed";
+        await sendTelegramMessage(chatId, `Bybit помилка: ${msg}`);
+        await logError("bybit_status_telegram", { chat_id: String(chatId), message: msg });
+      }
       return res.json({ status: "ok", action: "bybit_status" });
     }
     if (/^bybit\s+resume$/i.test(text)) {

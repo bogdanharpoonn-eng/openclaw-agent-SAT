@@ -327,8 +327,14 @@ export async function buildAgentContext() {
 }
 
 export async function getStatusText() {
-  const status = await refreshStatus();
-  const ticker = await getSpotTicker(status.symbol);
+  let status;
+  let ticker;
+  try {
+    status = await refreshStatus();
+    ticker = await getSpotTicker(status.symbol);
+  } catch (err) {
+    throw new Error(err?.message || "Bybit API request failed");
+  }
   return [
     `Bybit ${status.testnet ? "TESTNET" : "MAINNET"} (SPOT)`,
     `Символ: ${status.symbol} | Ціна: ${ticker.lastPrice}`,
