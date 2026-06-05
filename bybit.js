@@ -96,10 +96,30 @@ export async function probeBybitReachability() {
   return { ok: true, ...getBybitApiConfig() };
 }
 
+function buildQueryString(query = {}) {
+  const keys = Object.keys(query).sort();
+  return keys
+    .map(key => `${encodeURIComponent(key)}=${encodeURIComponent(String(query[key]))}`)
+    .join("&");
+}
+
+function formatHttpAuthError(status, context) {
+  if (status !== 401) {
+    return `${context}: empty response (HTTP ${status})`;
+  }
+  return (
+    `${context}: HTTP 401 (авторизація). Перевір: ` +
+    "1) Secret скопійовано повністю без пробілів; " +
+    "2) ключ з того ж testnet що endpoint (" + getBaseUrl() + "); " +
+    "3) у API Management вимкни IP whitelist (Railway має динамічний IP); " +
+    "4) права Read на Wallet/Asset."
+  );
+}
+
 async function parseBybitResponse(response, context) {
   const raw = await response.text();
   if (!raw || !raw.trim()) {
-    throw new Error(`${context}: empty response (HTTP ${response.status})`);
+    throw new Error(formatHttpAuthError(response.status, context));
   }
   if (response.status === 403 && /cloudfront|block access from your country/i.test(raw)) {
     const proxyHint = getProxyUrl()
@@ -180,7 +200,7 @@ async function signedRequest(method, endpoint, query = {}, body = null) {
   let signPayload = "";
 
   if (method === "GET") {
-    const qs = new URLSearchParams(query).toString();
+    const qs = buildQueryString(query);
     signPayload = timestamp + apiKey + recvWindow + qs;
     if (qs) url += `?${qs}`;
   } else {
@@ -192,6 +212,7 @@ async function signedRequest(method, endpoint, query = {}, body = null) {
   const headers = {
     "X-BAPI-API-KEY": apiKey,
     "X-BAPI-SIGN": sign,
+    "X-BAPI-SIGN-TYPE": "2",
     "X-BAPI-TIMESTAMP": timestamp,
     "X-BAPI-RECV-WINDOW": recvWindow,
     "Content-Type": "application/json",
@@ -210,6 +231,15 @@ async function signedRequest(method, endpoint, query = {}, body = null) {
 }
 
 function formatBybitApiError(message) {
+  if (/unmatched ip|ip.*whitelist|10010/i.test(message)) {
+    return (
+      `${message} — вимкни IP whitelist для ключа або додай статичний egress IP. ` +
+      "На Railway IP динамічний, для testnet краще без обмеження IP."
+    );
+  }
+  if (/invalid sign|error sign|10004/i.test(message)) {
+    return `${message} — перевір BYBIT_API_SECRET (без пробілів, повний secret).`;
+  }
   if (!/api key is invalid/i.test(message)) return message;
   const base = getBaseUrl();
   const region = (process.env.BYBIT_API_REGION || "eu").trim().toLowerCase();
