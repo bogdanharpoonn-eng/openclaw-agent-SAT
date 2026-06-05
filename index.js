@@ -393,29 +393,38 @@ app.get("/", (_req, res) => {
   });
 });
 
-app.get("/health", async (_req, res) => {
-  const payload = {
+// IMPORTANT: Railway healthcheck MUST be fast and should not depend on external APIs.
+// If Bybit blocks the server (CloudFront 403), this endpoint must still return 200 quickly.
+app.get("/health", (_req, res) => {
+  res.json({
     status: "ok",
     service: "openclaw-agent-SAT",
     bybit: bybit.isConfigured(),
     railwayRegion: process.env.RAILWAY_REPLICA_REGION || process.env.RAILWAY_REGION || null,
-    ...bybit.isConfigured() ? bybit.getBybitApiConfig() : {},
-  };
-  if (bybit.isConfigured()) {
-    try {
-      const timeoutMs = Number(process.env.BYBIT_PROBE_TIMEOUT_MS || 2500);
-      const probe = await Promise.race([
-        bybit.probeBybitReachability(),
-        new Promise((_, reject) => setTimeout(() => reject(new Error("Bybit probe timeout")), timeoutMs)),
-      ]);
-      payload.bybitApi = "ok";
-      payload.bybitApiBase = probe.baseUrl;
-    } catch (err) {
-      payload.bybitApi = "blocked";
-      payload.bybitApiHint = String(err?.message || err).slice(0, 280);
-    }
+    bybitApiConfig: bybit.isConfigured() ? bybit.getBybitApiConfig() : undefined,
+    bybitApi: "skipped",
+  });
+});
+
+// Optional: explicit Bybit reachability probe (can fail with CloudFront 403)
+app.get("/bybit/ping", async (_req, res) => {
+  if (!bybit.isConfigured()) {
+    return res.json({ status: "error", message: "Bybit API not configured" });
   }
-  res.json(payload);
+  try {
+    const timeoutMs = Number(process.env.BYBIT_PROBE_TIMEOUT_MS || 2500);
+    const probe = await Promise.race([
+      bybit.probeBybitReachability(),
+      new Promise((_, reject) => setTimeout(() => reject(new Error("Bybit probe timeout")), timeoutMs)),
+    ]);
+    return res.json({ status: "ok", bybitApi: "ok", baseUrl: probe.baseUrl });
+  } catch (err) {
+    return res.json({
+      status: "error",
+      bybitApi: "blocked",
+      hint: String(err?.message || err).slice(0, 280),
+    });
+  }
 });
 
 app.post("/fetch", async (req, res) => {
