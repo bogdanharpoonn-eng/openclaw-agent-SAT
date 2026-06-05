@@ -798,10 +798,12 @@ app.get("/capabilities", async (_req, res) => {
   }
 });
 
-app.listen(PORT, () => {
-  console.log(`Engine started on port ${PORT}`);
+app.listen(PORT, "0.0.0.0", () => {
+  console.log(`Engine started on 0.0.0.0:${PORT}`);
   if (bybit.isConfigured()) {
     const alertChatId = process.env.BYBIT_ALERT_CHAT_ID || TELEGRAM_CHAT_ALLOWLIST[0];
+    const monitorDelayMs = Number(process.env.BYBIT_MONITOR_START_DELAY_MS || 15000);
+    setTimeout(() => {
     bybit.startAutoMonitor(async (message) => {
       console.log("BYBIT_ALERT:", message);
       if (alertChatId && TELEGRAM_BOT_TOKEN) {
@@ -813,5 +815,7 @@ app.listen(PORT, () => {
       }
     });
     console.log(`Bybit monitor started (${bybit.getPublicConfig().testnet ? "testnet" : "mainnet"})`);
+    }, monitorDelayMs);
+    console.log(`Bybit monitor scheduled in ${monitorDelayMs}ms`);
   }
 });
