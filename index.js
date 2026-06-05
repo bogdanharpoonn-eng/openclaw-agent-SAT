@@ -403,7 +403,11 @@ app.get("/health", async (_req, res) => {
   };
   if (bybit.isConfigured()) {
     try {
-      const probe = await bybit.probeBybitReachability();
+      const timeoutMs = Number(process.env.BYBIT_PROBE_TIMEOUT_MS || 2500);
+      const probe = await Promise.race([
+        bybit.probeBybitReachability(),
+        new Promise((_, reject) => setTimeout(() => reject(new Error("Bybit probe timeout")), timeoutMs)),
+      ]);
       payload.bybitApi = "ok";
       payload.bybitApiBase = probe.baseUrl;
     } catch (err) {
