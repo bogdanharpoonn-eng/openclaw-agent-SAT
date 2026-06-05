@@ -20,7 +20,7 @@ const SCRAPE_TIMEOUT_MS = Number(process.env.SCRAPE_TIMEOUT_MS || 45000);
 const SCRAPLING_NO_VERIFY = String(process.env.SCRAPLING_NO_VERIFY || "").toLowerCase() === "true";
 const TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || "";
 const BASE_URL = process.env.BASE_URL || "";
-const PORT = process.env.PORT || 3000;
+const PORT = Number(process.env.PORT) || 3000;
 const TELEGRAM_CHAT_ALLOWLIST = (process.env.TELEGRAM_CHAT_ALLOWLIST || "")
   .split(",")
   .map(s => s.trim())

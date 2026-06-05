@@ -6,7 +6,7 @@ Telegram-бот + HTTP API для **Bybit SPOT** (testnet/mainnet): баланс
 
 ## Railway
 
-`Dockerfile` — Node.js only. Healthcheck: `GET /health`.
+Railway збирає через **Railpack** (`railway.toml`). Локальний Docker: `docker/Dockerfile`. Healthcheck: `GET /health`.
 
 **Bybit 403 на Railway (навіть EU West):** регіон Amsterdam у тебе вже ок (`railwayRegion: europe-west4-drams3a`). Bybit CloudFront **блокує IP багатьох хмар** (Railway, AWS, Heroku), не лише США.
 

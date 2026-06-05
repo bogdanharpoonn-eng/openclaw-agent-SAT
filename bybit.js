@@ -1,7 +1,6 @@
 import crypto from "crypto";
 import fs from "fs/promises";
 import path from "path";
-import { ProxyAgent } from "undici";
 import {
   ensureStrategyState,
   evaluateStrategy,
@@ -43,15 +42,18 @@ function getProxyUrl() {
 
 let proxyAgent = null;
 
-function getFetchOptions(init = {}) {
+async function getFetchOptions(init = {}) {
   const proxy = getProxyUrl();
   if (!proxy) return init;
-  if (!proxyAgent) proxyAgent = new ProxyAgent(proxy);
+  if (!proxyAgent) {
+    const { ProxyAgent } = await import("undici");
+    proxyAgent = new ProxyAgent(proxy);
+  }
   return { ...init, dispatcher: proxyAgent };
 }
 
 async function bybitFetch(url, init = {}) {
-  return fetch(url, getFetchOptions(init));
+  return fetch(url, await getFetchOptions(init));
 }
 
 export function getBybitApiConfig() {
