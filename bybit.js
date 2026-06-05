@@ -1,6 +1,7 @@
 import crypto from "crypto";
 import fs from "fs/promises";
 import path from "path";
+import { ProxyAgent } from "undici";
 import {
   ensureStrategyState,
   evaluateStrategy,
@@ -38,6 +39,19 @@ function getBaseUrl() {
 
 function getProxyUrl() {
   return (process.env.BYBIT_HTTPS_PROXY || process.env.HTTPS_PROXY || "").trim();
+}
+
+let proxyAgent = null;
+
+function getFetchOptions(init = {}) {
+  const proxy = getProxyUrl();
+  if (!proxy) return init;
+  if (!proxyAgent) proxyAgent = new ProxyAgent(proxy);
+  return { ...init, dispatcher: proxyAgent };
+}
+
+async function bybitFetch(url, init = {}) {
+  return fetch(url, getFetchOptions(init));
 }
 
 export function getBybitApiConfig() {
@@ -181,7 +195,7 @@ async function signedRequest(method, endpoint, query = {}, body = null) {
     "Content-Type": "application/json",
   };
 
-  const response = await fetch(url, {
+  const response = await bybitFetch(url, {
     method,
     headers,
     body: method === "GET" ? undefined : (body == null ? undefined : JSON.stringify(body)),
@@ -196,7 +210,7 @@ async function signedRequest(method, endpoint, query = {}, body = null) {
 async function publicGet(endpoint, query = {}) {
   const qs = new URLSearchParams(query).toString();
   const url = `${getBaseUrl()}${endpoint}${qs ? `?${qs}` : ""}`;
-  const response = await fetch(url);
+  const response = await bybitFetch(url);
   const data = await parseBybitResponse(response, `GET ${endpoint}`);
   if (data.retCode !== 0) {
     throw new Error(data.retMsg || `Bybit public API error ${data.retCode}`);
