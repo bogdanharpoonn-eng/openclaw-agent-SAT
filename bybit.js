@@ -121,12 +121,15 @@ async function parseBybitResponse(response, context) {
   if (!raw || !raw.trim()) {
     throw new Error(formatHttpAuthError(response.status, context));
   }
-  if (response.status === 403 && /cloudfront|block access from your country/i.test(raw)) {
+  if (
+    response.status === 403 &&
+    /cloudfront|forbidden for your country|block access from your country/i.test(raw)
+  ) {
     const proxyHint = getProxyUrl()
-      ? ""
-      : " Bybit часто блокує IP хмар (Railway/AWS) навіть у EU — додай BYBIT_HTTPS_PROXY (статичний egress) або VPS (Hetzner).";
+      ? " Перевір BYBIT_HTTPS_PROXY — проксі теж може бути заблокований."
+      : " Railway IP заблокований Bybit CDN. Потрібен BYBIT_HTTPS_PROXY (статичний egress) або VPS (Hetzner), або запуск бота локально на ПК.";
     throw new Error(
-      `${context}: Bybit CloudFront 403 — IP сервера в deny-list CDN.${proxyHint} ` +
+      `${context}: Bybit 403 — доступ заборонено для IP сервера.${proxyHint} ` +
       `Endpoint: ${getBaseUrl()}.`
     );
   }
