@@ -204,9 +204,26 @@ async function signedRequest(method, endpoint, query = {}, body = null) {
   });
   const data = await parseBybitResponse(response, `${method} ${endpoint}`);
   if (data.retCode !== 0) {
-    throw new Error(data.retMsg || `Bybit API error ${data.retCode}`);
+    throw new Error(formatBybitApiError(data.retMsg || `Bybit API error ${data.retCode}`));
   }
   return data.result;
+}
+
+function formatBybitApiError(message) {
+  if (!/api key is invalid/i.test(message)) return message;
+  const base = getBaseUrl();
+  const region = (process.env.BYBIT_API_REGION || "eu").trim().toLowerCase();
+  if (region === "eu") {
+    return (
+      `${message} — ключі з testnet.bybit.com не підходять для ${base}. ` +
+      "Створи нові ключі на https://testnet.bybit.eu/app/user/api-management " +
+      "або в Railway постав BYBIT_API_REGION=global."
+    );
+  }
+  return (
+    `${message} — перевір ключі на https://testnet.bybit.com/app/user/api-management ` +
+    `і BYBIT_TESTNET=true, endpoint: ${base}.`
+  );
 }
 
 async function publicGet(endpoint, query = {}) {
